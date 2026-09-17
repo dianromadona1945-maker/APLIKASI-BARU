@@ -1,19 +1,45 @@
-import { Student, StudentDocument, AuditLog, User, CompletenessStats, DocumentType, VerificationStatus } from '../types';
-import { INITIAL_USERS } from '../data/constants';
+import { Student, StudentDocument, AuditLog, User, CompletenessStats, DocumentType, VerificationStatus, InstitutionLevel } from '../types';
+import { INITIAL_USERS, DEFAULT_ACADEMIC_YEARS } from '../data/constants';
 import { generateSampleDocumentDataUrl } from '../utils/documentGenerator';
 
 const STORAGE_KEYS = {
-  STUDENTS: 'arsip_siswa_data_v1',
+  STUDENTS: 'arsip_siswa_data_v2',
   DOCUMENTS: 'arsip_dokumen_data_v1',
   LOGS: 'arsip_log_data_v1',
   USERS: 'arsip_users_data_v1',
   CURRENT_USER: 'arsip_current_user_v1',
-  INITIALIZED: 'arsip_initialized_v1',
+  INITIALIZED: 'arsip_initialized_v3',
   IS_AUTHENTICATED: 'arsip_auth_state_v1',
-  ACADEMIC_YEARS: 'arsip_academic_years_v2',
+  ACADEMIC_YEARS: 'arsip_academic_years_v3',
 };
 
-// Seed student profiles
+// Helper: parse institution from string (SD, SMP, or SMK)
+export function parseInstitution(str?: string, defaultInst: InstitutionLevel = 'SMP'): InstitutionLevel {
+  if (!str) return defaultInst;
+  const upper = str.toUpperCase().trim();
+  if (upper.startsWith('SD -') || upper.startsWith('SD-') || upper.startsWith('SD ') || upper === 'SD' || upper.includes('[SD]')) return 'SD';
+  if (upper.startsWith('SMK -') || upper.startsWith('SMK-') || upper.startsWith('SMK ') || upper === 'SMK' || upper.includes('[SMK]')) return 'SMK';
+  if (upper.startsWith('SMP -') || upper.startsWith('SMP-') || upper.startsWith('SMP ') || upper === 'SMP' || upper.includes('[SMP]')) return 'SMP';
+  if (upper.includes('SD')) return 'SD';
+  if (upper.includes('SMK')) return 'SMK';
+  if (upper.includes('SMP')) return 'SMP';
+  return defaultInst;
+}
+
+// Helper: normalize academic year format to "LEMBAGA - TAHUN/TAHUN" (e.g. "SMP - 2024/2025")
+export function formatAcademicYear(institution: InstitutionLevel, rawYear: string): string {
+  const match = rawYear.match(/(\d{4}\/\d{4})/);
+  const yearCycle = match ? match[1] : rawYear.replace(/^(SD|SMP|SMK)\s*[-:]*\s*/i, '').trim();
+  return `${institution} - ${yearCycle}`;
+}
+
+// Helper: extract cycle like "2024/2025" from "SMP - 2024/2025"
+export function extractYearCycle(academicYearString: string): string {
+  const match = academicYearString.match(/(\d{4}\/\d{4})/);
+  return match ? match[1] : academicYearString;
+}
+
+// Seed student profiles across 3 institutions: SD, SMP, and SMK
 const SEED_STUDENTS: Student[] = [
   {
     id: 'std-001',
@@ -22,14 +48,15 @@ const SEED_STUDENTS: Student[] = [
     nisn: '0089123456',
     nik: '3201081503080002',
     birthPlace: 'Bogor',
-    birthDate: '15 Maret 2008',
+    birthDate: '15 Maret 2012',
     gender: 'L',
-    classRoom: '2024/2025',
+    institution: 'SD',
+    classRoom: 'SD - 2024/2025',
     address: 'Jl. Pajajaran No. 45, RT 02/RW 05, Kel. Sukasari, Kota Bogor',
     parentName: 'H. Sudarsono, S.T.',
     parentPhone: '0812-3456-7890',
     status: 'Aktif',
-    academicYear: '2024/2025',
+    academicYear: 'SD - 2024/2025',
     createdAt: '2024-07-10T08:00:00.000Z',
     updatedAt: '2024-07-15T10:30:00.000Z',
   },
@@ -40,14 +67,15 @@ const SEED_STUDENTS: Student[] = [
     nisn: '0087654321',
     nik: '3201085208080004',
     birthPlace: 'Jakarta',
-    birthDate: '12 Agustus 2008',
+    birthDate: '12 Agustus 2013',
     gender: 'P',
-    classRoom: '2024/2025',
+    institution: 'SD',
+    classRoom: 'SD - 2024/2025',
     address: 'Komplek Baranangsiang Indah Blok C2 No. 12, Kota Bogor',
     parentName: 'Ir. Hendra Gunawan',
     parentPhone: '0813-8899-2211',
     status: 'Aktif',
-    academicYear: '2024/2025',
+    academicYear: 'SD - 2024/2025',
     createdAt: '2024-07-10T08:15:00.000Z',
     updatedAt: '2024-07-16T11:00:00.000Z',
   },
@@ -58,14 +86,15 @@ const SEED_STUDENTS: Student[] = [
     nisn: '0078901234',
     nik: '3201082005070001',
     birthPlace: 'Bandung',
-    birthDate: '20 Mei 2007',
+    birthDate: '20 Mei 2010',
     gender: 'L',
-    classRoom: '2025/2026',
+    institution: 'SMP',
+    classRoom: 'SMP - 2025/2026',
     address: 'Jl. Sholeh Iskandar No. 88, Tanah Sareal, Kota Bogor',
     parentName: 'Drs. Agus Setiawan',
     parentPhone: '0857-1122-3344',
     status: 'Aktif',
-    academicYear: '2025/2026',
+    academicYear: 'SMP - 2025/2026',
     createdAt: '2023-07-12T09:00:00.000Z',
     updatedAt: '2024-07-12T09:00:00.000Z',
   },
@@ -76,14 +105,15 @@ const SEED_STUDENTS: Student[] = [
     nisn: '0086549871',
     nik: '3201086011080003',
     birthPlace: 'Depok',
-    birthDate: '20 November 2008',
+    birthDate: '20 November 2010',
     gender: 'P',
-    classRoom: '2025/2026',
+    institution: 'SMP',
+    classRoom: 'SMP - 2025/2026',
     address: 'Kp. Muara RT 03/RW 01, Kel. Pasir Jaya, Kota Bogor',
     parentName: 'Mulyadi (Penerima PIP)',
     parentPhone: '0896-7788-9900',
     status: 'Aktif',
-    academicYear: '2025/2026',
+    academicYear: 'SMP - 2025/2026',
     createdAt: '2024-07-11T13:20:00.000Z',
     updatedAt: '2024-07-18T14:40:00.000Z',
   },
@@ -96,12 +126,13 @@ const SEED_STUDENTS: Student[] = [
     birthPlace: 'Surabaya',
     birthDate: '10 Januari 2007',
     gender: 'L',
-    classRoom: '2026/2027',
+    institution: 'SMK',
+    classRoom: 'SMK - 2026/2027',
     address: 'Jl. R.E. Martadinata No. 19, Bogor Tengah',
     parentName: 'Budi Nugroho, S.E.',
     parentPhone: '0812-9900-1122',
     status: 'Aktif',
-    academicYear: '2026/2027',
+    academicYear: 'SMK - 2026/2027',
     createdAt: '2023-07-14T10:00:00.000Z',
     updatedAt: '2024-08-01T08:00:00.000Z',
   },
@@ -112,14 +143,15 @@ const SEED_STUDENTS: Student[] = [
     nisn: '0069871234',
     nik: '3201084504060002',
     birthPlace: 'Bogor',
-    birthDate: '05 April 2006',
+    birthDate: '05 April 2007',
     gender: 'P',
-    classRoom: '2026/2027',
+    institution: 'SMK',
+    classRoom: 'SMK - 2026/2027',
     address: 'Jl. Pandu Raya No. 102, Bantarjati, Kota Bogor',
     parentName: 'dr. Anton Wijaya, Sp.A',
     parentPhone: '0811-2233-4455',
     status: 'Aktif',
-    academicYear: '2026/2027',
+    academicYear: 'SMK - 2026/2027',
     createdAt: '2022-07-15T09:00:00.000Z',
     updatedAt: '2024-07-20T16:00:00.000Z',
   },
@@ -289,30 +321,34 @@ export function getStudents(): Student[] {
   const raw = localStorage.getItem(STORAGE_KEYS.STUDENTS);
   if (!raw) return [];
   try {
-    const list: Student[] = JSON.parse(raw);
+    const list: any[] = JSON.parse(raw);
     let modified = false;
-    const migrated = list.map((s) => {
-      // If classRoom is an old class format (e.g. 'X MIPA 1', 'SMP - VII A', etc.), convert to academic year
-      if (
-        s.classRoom &&
-        (s.classRoom.includes('MIPA') ||
-          s.classRoom.includes('IPS') ||
-          s.classRoom.includes('SMP') ||
-          s.classRoom.includes('SMK') ||
-          s.classRoom.includes('RPL') ||
-          s.classRoom.includes('TKJ') ||
-          s.classRoom.includes('AKL') ||
-          s.classRoom.includes('Kelas'))
-      ) {
+    const migrated: Student[] = list.map((s, index) => {
+      // Determine institution: SD, SMP, or SMK
+      let inst: InstitutionLevel = s.institution;
+      if (!inst || (inst !== 'SD' && inst !== 'SMP' && inst !== 'SMK')) {
+        if (s.classRoom) inst = parseInstitution(s.classRoom, index < 2 ? 'SD' : index < 4 ? 'SMP' : 'SMK');
+        else if (s.academicYear) inst = parseInstitution(s.academicYear, index < 2 ? 'SD' : index < 4 ? 'SMP' : 'SMK');
+        else inst = index < 2 ? 'SD' : index < 4 ? 'SMP' : 'SMK';
+        modified = true;
+      }
+
+      // Format academicYear and classRoom to include the institution tag
+      const rawYr = s.academicYear || s.classRoom || '2025/2026';
+      const formattedYear = formatAcademicYear(inst, rawYr);
+
+      if (s.institution !== inst || s.academicYear !== formattedYear || s.classRoom !== formattedYear) {
         modified = true;
         return {
           ...s,
-          classRoom: s.academicYear || '2024/2025',
-          academicYear: s.academicYear || '2024/2025',
+          institution: inst,
+          classRoom: formattedYear,
+          academicYear: formattedYear,
         };
       }
-      return s;
+      return s as Student;
     });
+
     if (modified) {
       localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(migrated));
     }
@@ -327,20 +363,34 @@ export function saveStudent(studentData: Omit<Student, 'id' | 'createdAt' | 'upd
   const now = new Date().toISOString();
   let savedStudent: Student;
 
+  const institution: InstitutionLevel =
+    studentData.institution || parseInstitution(studentData.classRoom || studentData.academicYear, 'SMP');
+  const formattedYear = formatAcademicYear(
+    institution,
+    studentData.academicYear || studentData.classRoom || '2025/2026'
+  );
+
+  const cleanData = {
+    ...studentData,
+    institution,
+    classRoom: formattedYear,
+    academicYear: formattedYear,
+  };
+
   if (studentData.id) {
     // Update
     const idx = students.findIndex((s) => s.id === studentData.id);
     if (idx !== -1) {
       savedStudent = {
         ...students[idx],
-        ...studentData,
+        ...cleanData,
         id: studentData.id,
         updatedAt: now,
       };
       students[idx] = savedStudent;
     } else {
       savedStudent = {
-        ...studentData,
+        ...cleanData,
         id: studentData.id,
         createdAt: now,
         updatedAt: now,
@@ -351,7 +401,7 @@ export function saveStudent(studentData: Omit<Student, 'id' | 'createdAt' | 'upd
     // Create
     const newId = `std-${Date.now().toString().slice(-6)}`;
     savedStudent = {
-      ...studentData,
+      ...cleanData,
       id: newId,
       createdAt: now,
       updatedAt: now,
@@ -678,40 +728,79 @@ export function resetToFactoryDefault(): void {
   initializeStorage();
 }
 
-// Academic Years (Tahun Pelajaran) Management
+// Academic Years (Tahun Pelajaran) Management for 3 Institutions: SD, SMP, and SMK
 export const BASE_ACADEMIC_YEARS: string[] = [
-  '2023/2024',
-  '2024/2025',
-  '2025/2026',
-  '2026/2027',
-  '2027/2028',
-  '2028/2029',
-  '2029/2030',
+  'SD - 2026/2027',
+  'SD - 2025/2026',
+  'SD - 2024/2025',
+  'SD - 2023/2024',
+  'SMP - 2026/2027',
+  'SMP - 2025/2026',
+  'SMP - 2024/2025',
+  'SMP - 2023/2024',
+  'SMK - 2026/2027',
+  'SMK - 2025/2026',
+  'SMK - 2024/2025',
+  'SMK - 2023/2024',
 ];
+
+// Helper: sort academic years cleanly by year cycle descending, then SD -> SMP -> SMK
+export function sortAcademicYears(years: string[]): string[] {
+  const institutionOrder: Record<string, number> = { SD: 1, SMP: 2, SMK: 3 };
+  return [...years].sort((a, b) => {
+    const cycleA = extractYearCycle(a);
+    const cycleB = extractYearCycle(b);
+    if (cycleA !== cycleB) {
+      return cycleB.localeCompare(cycleA);
+    }
+    const instA = parseInstitution(a);
+    const instB = parseInstitution(b);
+    return (institutionOrder[instA] || 9) - (institutionOrder[instB] || 9);
+  });
+}
 
 export function getAcademicYears(): string[] {
   if (typeof window === 'undefined') return BASE_ACADEMIC_YEARS;
   try {
     const raw = localStorage.getItem(STORAGE_KEYS.ACADEMIC_YEARS);
     let years: string[] = raw ? JSON.parse(raw) : [];
+
+    // If empty, use default base years
     if (!Array.isArray(years) || years.length === 0) {
       years = [...BASE_ACADEMIC_YEARS];
     }
+
+    // Auto-migrate any unbranded legacy years (e.g. "2024/2025") to SD, SMP, and SMK variants
+    let migratedYears: string[] = [];
+    years.forEach((yr) => {
+      const trimmed = yr.trim();
+      if (!trimmed) return;
+      if (trimmed.startsWith('SD - ') || trimmed.startsWith('SMP - ') || trimmed.startsWith('SMK - ')) {
+        if (!migratedYears.includes(trimmed)) migratedYears.push(trimmed);
+      } else {
+        const cycle = extractYearCycle(trimmed);
+        (['SD', 'SMP', 'SMK'] as InstitutionLevel[]).forEach((inst) => {
+          const formatted = `${inst} - ${cycle}`;
+          if (!migratedYears.includes(formatted)) migratedYears.push(formatted);
+        });
+      }
+    });
+
     // Also include any academic years present on student profiles
     const rawStudents = localStorage.getItem(STORAGE_KEYS.STUDENTS);
     if (rawStudents) {
       const studentList: Student[] = JSON.parse(rawStudents);
       studentList.forEach((s) => {
-        const yr = (s.classRoom || s.academicYear || '').trim();
-        if (yr && !years.includes(yr)) {
-          years.push(yr);
+        const yr = (s.academicYear || s.classRoom || '').trim();
+        if (yr && !migratedYears.includes(yr)) {
+          migratedYears.push(yr);
         }
       });
     }
 
-    // Sort descending so recent/future years appear near the top
-    years.sort((a, b) => b.localeCompare(a));
-    return years;
+    const sorted = sortAcademicYears(migratedYears);
+    saveAcademicYears(sorted);
+    return sorted;
   } catch {
     return BASE_ACADEMIC_YEARS;
   }
@@ -722,18 +811,53 @@ export function saveAcademicYears(years: string[]): void {
   localStorage.setItem(STORAGE_KEYS.ACADEMIC_YEARS, JSON.stringify(years));
 }
 
-export function addAcademicYear(newYear: string): { success: boolean; message?: string; years: string[] } {
+export function addAcademicYear(
+  newYear: string,
+  targetInstitution?: InstitutionLevel | 'ALL'
+): { success: boolean; message?: string; years: string[] } {
   const trimmed = newYear.trim();
   if (!trimmed) {
     return { success: false, message: 'Tahun pelajaran tidak boleh kosong.', years: getAcademicYears() };
   }
 
   const currentYears = getAcademicYears();
-  if (currentYears.includes(trimmed)) {
-    return { success: false, message: `Tahun pelajaran "${trimmed}" sudah terdaftar dalam sistem.`, years: currentYears };
+  const yearCycle = extractYearCycle(trimmed);
+
+  // If already prefixed (e.g. "SD - 2026/2027")
+  if (trimmed.startsWith('SD - ') || trimmed.startsWith('SMP - ') || trimmed.startsWith('SMK - ')) {
+    if (currentYears.includes(trimmed)) {
+      return { success: false, message: `Tahun pelajaran "${trimmed}" sudah terdaftar.`, years: currentYears };
+    }
+    const updated = sortAcademicYears([trimmed, ...currentYears]);
+    saveAcademicYears(updated);
+    return { success: true, years: updated };
   }
 
-  const updated = [trimmed, ...currentYears].sort((a, b) => b.localeCompare(a));
+  // If specific institution or ALL requested
+  const institutionsToAdd: InstitutionLevel[] =
+    targetInstitution === 'ALL'
+      ? ['SD', 'SMP', 'SMK']
+      : targetInstitution
+      ? [targetInstitution]
+      : ['SD', 'SMP', 'SMK'];
+
+  const toAdd: string[] = [];
+  institutionsToAdd.forEach((inst) => {
+    const formatted = `${inst} - ${yearCycle}`;
+    if (!currentYears.includes(formatted)) {
+      toAdd.push(formatted);
+    }
+  });
+
+  if (toAdd.length === 0) {
+    return {
+      success: false,
+      message: `Tahun pelajaran untuk siklus "${yearCycle}" sudah terdaftar untuk lembaga yang dipilih.`,
+      years: currentYears,
+    };
+  }
+
+  const updated = sortAcademicYears([...toAdd, ...currentYears]);
   saveAcademicYears(updated);
   return { success: true, years: updated };
 }
@@ -745,7 +869,7 @@ export function deleteAcademicYear(
   const trimmed = year.trim();
   const currentYears = getAcademicYears();
 
-  // Check if any student is assigned to this academic year
+  // Check if any student is assigned to this exact academic year
   const inUse = students.some(
     (s) => s.classRoom === trimmed || s.academicYear === trimmed
   );

@@ -15,11 +15,13 @@ import {
   ChevronRight,
   Archive,
   Calendar,
+  School,
 } from 'lucide-react';
-import { Student, StudentDocument, DocumentType, UserRole } from '../types';
-import { calculateCompleteness, getAcademicYears } from '../services/storage';
+import { Student, StudentDocument, DocumentType, UserRole, InstitutionLevel } from '../types';
+import { calculateCompleteness, getAcademicYears, parseInstitution, extractYearCycle } from '../services/storage';
 import { downloadStudentZip, downloadAllStudentsZip } from '../utils/zipExport';
 import { ManageAcademicYearsModal } from './ManageAcademicYearsModal';
+import { INSTITUTION_CONFIGS, INSTITUTION_LIST } from '../data/constants';
 
 interface StudentListProps {
   students: Student[];
@@ -45,6 +47,7 @@ export const StudentList: React.FC<StudentListProps> = ({
   onYearsUpdated,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedInstitution, setSelectedInstitution] = useState<'ALL' | InstitutionLevel>('ALL');
   const [selectedYear, setSelectedYear] = useState('Semua Tahun Pelajaran');
   const [statusFilter, setStatusFilter] = useState<'Semua' | 'Lengkap' | 'Belum Lengkap' | 'Kosong'>('Semua');
   const [academicYears, setAcademicYears] = useState<string[]>([]);
@@ -63,9 +66,40 @@ export const StudentList: React.FC<StudentListProps> = ({
     if (onYearsUpdated) onYearsUpdated(updatedYears);
   };
 
+  // Filtered academic years for the dropdown based on selected institution
+  const filteredDropdownYears = useMemo(() => {
+    if (selectedInstitution === 'ALL') {
+      return academicYears;
+    }
+    return academicYears.filter((yr) => {
+      const inst = parseInstitution(yr, 'SMP');
+      return inst === selectedInstitution;
+    });
+  }, [academicYears, selectedInstitution]);
+
+  // Institution student counts for quick badge counters
+  const institutionCounts = useMemo(() => {
+    const counts = { ALL: students.length, SD: 0, SMP: 0, SMK: 0 };
+    students.forEach((s) => {
+      const inst = s.institution || parseInstitution(s.classRoom || s.academicYear, 'SMP');
+      if (counts[inst] !== undefined) {
+        counts[inst]++;
+      }
+    });
+    return counts;
+  }, [students]);
+
   // Filter students
   const filteredStudents = useMemo(() => {
     return students.filter((student) => {
+      const studentInst: InstitutionLevel =
+        student.institution || parseInstitution(student.classRoom || student.academicYear, 'SMP');
+
+      // Institution check
+      if (selectedInstitution !== 'ALL' && studentInst !== selectedInstitution) {
+        return false;
+      }
+
       // Search check
       const query = searchTerm.toLowerCase();
       const matchesSearch =
@@ -73,13 +107,15 @@ export const StudentList: React.FC<StudentListProps> = ({
         student.nis.includes(query) ||
         student.nisn.includes(query) ||
         student.nik.includes(query) ||
+        (student.parentPhone && student.parentPhone.includes(query)) ||
         student.parentName.toLowerCase().includes(query);
 
       // Academic Year check
       const matchesYear =
         selectedYear === 'Semua Tahun Pelajaran' ||
         student.classRoom === selectedYear ||
-        student.academicYear === selectedYear;
+        student.academicYear === selectedYear ||
+        extractYearCycle(student.classRoom) === selectedYear;
 
       // Completeness status check
       const stats = calculateCompleteness(student, documents);
@@ -91,21 +127,24 @@ export const StudentList: React.FC<StudentListProps> = ({
 
       return matchesSearch && matchesYear && matchesStatus;
     });
-  }, [students, documents, searchTerm, selectedYear, statusFilter]);
+  }, [students, documents, searchTerm, selectedInstitution, selectedYear, statusFilter]);
 
   // Export CSV function
   const handleExportCsv = () => {
-    const headers = ['Nama Siswa', 'NIS', 'NISN', 'NIK', 'Tahun Pelajaran', 'TTL', 'Alamat', 'Orang Tua', 'Status Kelengkapan', 'KK', 'KTP', 'Akta', 'Ijazah', 'KIP'];
+    const headers = ['Nama Siswa', 'Lembaga', 'NIS', 'NISN', 'NIK', 'Tahun Pelajaran', 'No. HP', 'TTL', 'Alamat', 'Orang Tua', 'Status Kelengkapan', 'KK', 'KTP', 'Akta', 'Ijazah', 'KIP'];
     const rows = filteredStudents.map((s) => {
       const sDocs = documents.filter((d) => d.studentId === s.id);
       const stats = calculateCompleteness(s, documents);
+      const sInst = s.institution || parseInstitution(s.classRoom, 'SMP');
       const hasDoc = (type: DocumentType) => (sDocs.some((d) => d.docType === type) ? 'Ada' : 'Belum');
       return [
         `"${s.name}"`,
+        `"${sInst}"`,
         `"${s.nis}"`,
         `"${s.nisn}"`,
         `"${s.nik}"`,
         `"${s.classRoom}"`,
+        `"${s.parentPhone || '-'}"`,
         `"${s.birthPlace}, ${s.birthDate}"`,
         `"${s.address}"`,
         `"${s.parentName}"`,
@@ -122,7 +161,7 @@ export const StudentList: React.FC<StudentListProps> = ({
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement('a');
     link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `Rekap_Arsip_Siswa_${selectedYear.replace(/[\s\/]+/g, '_')}.csv`);
+    link.setAttribute('download', `Rekap_Arsip_Siswa_${selectedInstitution}_${selectedYear.replace(/[\s\/]+/g, '_')}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -176,9 +215,16 @@ export const StudentList: React.FC<StudentListProps> = ({
       {/* Header and Controls */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-xl font-extrabold text-slate-900">Data Siswa &amp; Arsip Dokumen</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-xl font-extrabold text-slate-900">Data Siswa &amp; Arsip Dokumen</h2>
+            {selectedInstitution !== 'ALL' && (
+              <span className={`px-2.5 py-0.5 rounded-md text-xs font-extrabold border ${INSTITUTION_CONFIGS[selectedInstitution].badgeClass}`}>
+                {INSTITUTION_CONFIGS[selectedInstitution].name}
+              </span>
+            )}
+          </div>
           <p className="text-xs text-slate-500 mt-0.5">
-            Menampilkan {filteredStudents.length} dari total {students.length} siswa terdaftar
+            Menampilkan {filteredStudents.length} dari total {students.length} siswa (3 Lembaga: SD, SMP, SMK)
           </p>
         </div>
 
@@ -186,7 +232,7 @@ export const StudentList: React.FC<StudentListProps> = ({
           <button
             onClick={handleExportCsv}
             title="Download file rekapitulasi data siswa ke format CSV/Excel"
-            className="inline-flex items-center gap-1.5 px-3 py-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 rounded-xl text-xs font-bold shadow-2xs transition"
+            className="inline-flex items-center gap-1.5 px-3 py-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 rounded-xl text-xs font-bold shadow-2xs transition cursor-pointer"
           >
             <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
             <span>Ekspor Excel</span>
@@ -195,7 +241,7 @@ export const StudentList: React.FC<StudentListProps> = ({
           <button
             onClick={() => downloadAllStudentsZip(filteredStudents, documents)}
             title="Download seluruh dokumen digital siswa terarsip dalam bentuk ZIP"
-            className="inline-flex items-center gap-1.5 px-3 py-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 rounded-xl text-xs font-bold shadow-2xs transition"
+            className="inline-flex items-center gap-1.5 px-3 py-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 rounded-xl text-xs font-bold shadow-2xs transition cursor-pointer"
           >
             <Archive className="w-4 h-4 text-indigo-600" />
             <span>Unduh Semua Berkas (ZIP)</span>
@@ -204,23 +250,70 @@ export const StudentList: React.FC<StudentListProps> = ({
           <button
             id="manage-academic-years-open-btn"
             onClick={() => setIsManageYearsOpen(true)}
-            title="Kelola & Tambah Tahun Pelajaran baru"
-            className="inline-flex items-center gap-1.5 px-3 py-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 rounded-xl text-xs font-bold shadow-2xs transition"
+            title="Kelola & Tambah Tahun Pelajaran baru untuk SD, SMP, SMK"
+            className="inline-flex items-center gap-1.5 px-3 py-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 rounded-xl text-xs font-bold shadow-2xs transition cursor-pointer"
           >
             <Calendar className="w-4 h-4 text-blue-600" />
-            <span>Th. Pelajaran</span>
+            <span>Kelola Th. Pelajaran</span>
           </button>
 
           {(currentUserRole === 'admin' || currentUserRole === 'petugas_tu') && (
             <button
               onClick={onAddNewStudent}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-2xs hover:shadow transition"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-2xs hover:shadow transition cursor-pointer"
             >
               <Plus className="w-4 h-4" />
               <span>Tambah Siswa</span>
             </button>
           )}
         </div>
+      </div>
+
+      {/* Quick Institution Tabs Selector */}
+      <div className="flex items-center gap-2 p-1.5 bg-slate-100/90 rounded-2xl border border-slate-200/80 overflow-x-auto">
+        <button
+          type="button"
+          onClick={() => {
+            setSelectedInstitution('ALL');
+            setSelectedYear('Semua Tahun Pelajaran');
+          }}
+          className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-extrabold transition cursor-pointer shrink-0 ${
+            selectedInstitution === 'ALL'
+              ? 'bg-white text-slate-900 shadow-xs ring-1 ring-slate-200'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+          }`}
+        >
+          <School className="w-3.5 h-3.5 text-slate-500" />
+          <span>Semua Lembaga</span>
+          <span className="px-1.5 py-0.2 bg-slate-200/80 text-slate-700 rounded-full text-[10px] font-bold">
+            {institutionCounts.ALL}
+          </span>
+        </button>
+
+        {INSTITUTION_LIST.map((inst) => {
+          const isSelected = selectedInstitution === inst.code;
+          return (
+            <button
+              key={inst.code}
+              type="button"
+              onClick={() => {
+                setSelectedInstitution(inst.code);
+                setSelectedYear('Semua Tahun Pelajaran');
+              }}
+              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-extrabold transition cursor-pointer shrink-0 ${
+                isSelected
+                  ? `bg-white ${inst.colorClass} shadow-xs ring-2 ring-blue-500`
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+              }`}
+            >
+              <span className={`w-2 h-2 rounded-full ${inst.code === 'SD' ? 'bg-emerald-500' : inst.code === 'SMP' ? 'bg-blue-500' : 'bg-purple-500'}`}></span>
+              <span>{inst.shortTitle}</span>
+              <span className="px-1.5 py-0.2 bg-slate-200/80 text-slate-700 rounded-full text-[10px] font-bold">
+                {institutionCounts[inst.code]}
+              </span>
+            </button>
+          );
+        })}
       </div>
 
       {/* Filter and Search Bar */}
@@ -232,13 +325,13 @@ export const StudentList: React.FC<StudentListProps> = ({
             type="text"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Cari berdasarkan Nama Siswa, NIS, NISN, NIK, atau Nama Orang Tua..."
+            placeholder="Cari berdasarkan Nama Siswa, NIS, NISN, NIK, atau No. HP..."
             className="w-full pl-10 pr-4 py-2 text-xs sm:text-sm bg-slate-50 hover:bg-slate-100/70 focus:bg-white rounded-xl border border-slate-200 focus:outline-hidden focus:ring-2 focus:ring-blue-500 transition"
           />
           {searchTerm && (
             <button
               onClick={() => setSearchTerm('')}
-              className="absolute right-3 top-2 text-xs text-slate-400 hover:text-slate-600"
+              className="absolute right-3 top-2 text-xs text-slate-400 hover:text-slate-600 cursor-pointer"
             >
               ✕
             </button>
@@ -246,7 +339,7 @@ export const StudentList: React.FC<StudentListProps> = ({
         </div>
 
         {/* Filter Tahun Pelajaran */}
-        <div className="w-full md:w-56 flex items-center gap-1.5">
+        <div className="w-full md:w-64 flex items-center gap-1.5">
           <div className="relative flex-1">
             <select
               id="student-list-year-filter"
@@ -254,10 +347,14 @@ export const StudentList: React.FC<StudentListProps> = ({
               onChange={(e) => setSelectedYear(e.target.value)}
               className="w-full py-2 px-3 text-xs sm:text-sm bg-slate-50 hover:bg-slate-100/70 rounded-xl border border-slate-200 text-slate-700 focus:outline-hidden focus:ring-2 focus:ring-blue-500 font-medium cursor-pointer"
             >
-              <option value="Semua Tahun Pelajaran">Semua Tahun Pelajaran</option>
-              {academicYears.map((yr) => (
+              <option value="Semua Tahun Pelajaran">
+                {selectedInstitution === 'ALL'
+                  ? 'Semua Tahun Pelajaran'
+                  : `Semua Th. Pelajaran (${selectedInstitution})`}
+              </option>
+              {filteredDropdownYears.map((yr) => (
                 <option key={yr} value={yr}>
-                  T.P. {yr}
+                  {yr}
                 </option>
               ))}
             </select>
@@ -266,7 +363,7 @@ export const StudentList: React.FC<StudentListProps> = ({
             type="button"
             id="quick-add-year-btn"
             onClick={() => setIsManageYearsOpen(true)}
-            title="Tambah atau Kelola Tahun Pelajaran"
+            title="Tambah atau Kelola Tahun Pelajaran SD, SMP, SMK"
             className="p-2 bg-slate-50 hover:bg-blue-50 hover:text-blue-700 text-slate-600 rounded-xl border border-slate-200 transition shrink-0 cursor-pointer"
           >
             <Plus className="w-4 h-4" />
@@ -295,6 +392,7 @@ export const StudentList: React.FC<StudentListProps> = ({
             <thead>
               <tr className="bg-slate-50/80 border-b border-slate-200 text-[11px] font-extrabold uppercase tracking-wider text-slate-500">
                 <th className="py-3.5 px-4">Identitas Siswa</th>
+                <th className="py-3.5 px-4">Lembaga</th>
                 <th className="py-3.5 px-4">NIS / NISN</th>
                 <th className="py-3.5 px-4">
                   <span className="inline-flex items-center gap-1">
@@ -310,12 +408,12 @@ export const StudentList: React.FC<StudentListProps> = ({
             <tbody className="divide-y divide-slate-100">
               {filteredStudents.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="py-12 text-center text-slate-400">
+                  <td colSpan={7} className="py-12 text-center text-slate-400">
                     <div className="max-w-xs mx-auto text-center space-y-2">
                       <FolderOpen className="w-10 h-10 mx-auto text-slate-300" />
                       <p className="font-semibold text-slate-700">Tidak ada data siswa ditemukan</p>
                       <p className="text-xs text-slate-400">
-                        Coba ubah kata kunci pencarian atau sesuaikan filter tahun pelajaran di atas.
+                        Coba sesuaikan tab lembaga, kata kunci pencarian, atau filter tahun pelajaran di atas.
                       </p>
                     </div>
                   </td>
@@ -324,6 +422,9 @@ export const StudentList: React.FC<StudentListProps> = ({
                 filteredStudents.map((student) => {
                   const studentDocs = documents.filter((d) => d.studentId === student.id);
                   const stats = calculateCompleteness(student, documents);
+                  const studentInst: InstitutionLevel =
+                    student.institution || parseInstitution(student.classRoom || student.academicYear, 'SMP');
+                  const instCfg = INSTITUTION_CONFIGS[studentInst];
 
                   return (
                     <tr
@@ -356,6 +457,13 @@ export const StudentList: React.FC<StudentListProps> = ({
                         </div>
                       </td>
 
+                      {/* Lembaga Badge */}
+                      <td className="py-3.5 px-4">
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-extrabold border ${instCfg.badgeClass}`}>
+                          {instCfg.name}
+                        </span>
+                      </td>
+
                       {/* NIS / NISN */}
                       <td className="py-3.5 px-4">
                         <div className="font-mono text-slate-800 font-medium">{student.nis}</div>
@@ -366,13 +474,13 @@ export const StudentList: React.FC<StudentListProps> = ({
 
                       {/* Tahun Pelajaran */}
                       <td className="py-3.5 px-4">
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold bg-blue-50 text-blue-800 border border-blue-200/80">
-                          <Calendar className="w-3 h-3 text-blue-600" />
-                          {student.classRoom}
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-slate-100 text-slate-800 border border-slate-200">
+                          <Calendar className="w-3 h-3 text-slate-500" />
+                          <span>{student.classRoom}</span>
                         </span>
                       </td>
 
-                      {/* Document Type Badges: KK, KTP, Akta, Ijazah, KIP */}
+                      {/* Document Type Badges: KK, Akta, Ijazah, KTP, KIP */}
                       <td className="py-3.5 px-4" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center gap-1.5">
                           <div className="text-center">
@@ -428,7 +536,7 @@ export const StudentList: React.FC<StudentListProps> = ({
                           <button
                             onClick={() => onOpenDossier(student)}
                             title="Buka Arsip & Kelola Dokumen Siswa"
-                            className="p-1.5 rounded-lg text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 transition"
+                            className="p-1.5 rounded-lg text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 transition cursor-pointer"
                           >
                             <FolderOpen className="w-4 h-4" />
                           </button>
@@ -436,7 +544,7 @@ export const StudentList: React.FC<StudentListProps> = ({
                           <button
                             onClick={() => downloadStudentZip(student, studentDocs)}
                             title="Unduh Berkas Siswa (ZIP)"
-                            className="p-1.5 rounded-lg text-slate-700 hover:bg-slate-100 border border-slate-200 transition"
+                            className="p-1.5 rounded-lg text-slate-700 hover:bg-slate-100 border border-slate-200 transition cursor-pointer"
                           >
                             <Download className="w-4 h-4" />
                           </button>
@@ -445,7 +553,7 @@ export const StudentList: React.FC<StudentListProps> = ({
                             <button
                               onClick={() => onEditStudent(student)}
                               title="Edit Biodata Siswa"
-                              className="p-1.5 rounded-lg text-slate-700 hover:bg-slate-100 border border-slate-200 transition"
+                              className="p-1.5 rounded-lg text-slate-700 hover:bg-slate-100 border border-slate-200 transition cursor-pointer"
                             >
                               <Edit className="w-4 h-4" />
                             </button>
@@ -455,7 +563,7 @@ export const StudentList: React.FC<StudentListProps> = ({
                             <button
                               onClick={() => onDeleteStudent(student.id, student.name)}
                               title="Hapus Siswa & Seluruh Dokumen"
-                              className="p-1.5 rounded-lg text-rose-600 hover:bg-rose-50 border border-rose-200 transition"
+                              className="p-1.5 rounded-lg text-rose-600 hover:bg-rose-50 border border-rose-200 transition cursor-pointer"
                             >
                               <Trash2 className="w-4 h-4" />
                             </button>
@@ -516,3 +624,4 @@ export const StudentList: React.FC<StudentListProps> = ({
     </div>
   );
 };
+

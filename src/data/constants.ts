@@ -1,4 +1,78 @@
-import { DocumentTypeConfig, DocumentType, User } from '../types';
+import { DocumentTypeConfig, DocumentType, User, InstitutionLevel } from '../types';
+
+export interface InstitutionConfig {
+  id: InstitutionLevel;
+  code: InstitutionLevel;
+  name: string;
+  shortTitle: string;
+  fullName: string;
+  badgeClass: string;
+  badgeSolidClass: string;
+  borderClass: string;
+  cardBorder: string;
+  colorClass: string;
+  textClass: string;
+  bgLightClass: string;
+  bgLight: string;
+  description: string;
+}
+
+export const INSTITUTION_CONFIGS: Record<InstitutionLevel, InstitutionConfig> = {
+  SD: {
+    id: 'SD',
+    code: 'SD',
+    name: 'SD',
+    shortTitle: 'Sekolah Dasar',
+    fullName: 'Sekolah Dasar (SD)',
+    badgeClass: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    badgeSolidClass: 'bg-emerald-600 text-white',
+    borderClass: 'border-emerald-300',
+    cardBorder: 'border-emerald-200',
+    colorClass: 'text-emerald-700',
+    textClass: 'text-emerald-700',
+    bgLightClass: 'bg-emerald-50/70',
+    bgLight: 'bg-emerald-50/70',
+    description: 'Jenjang Pendidikan Dasar Kelas 1 - 6',
+  },
+  SMP: {
+    id: 'SMP',
+    code: 'SMP',
+    name: 'SMP',
+    shortTitle: 'SMP',
+    fullName: 'Sekolah Menengah Pertama (SMP)',
+    badgeClass: 'bg-blue-50 text-blue-700 border-blue-200',
+    badgeSolidClass: 'bg-blue-600 text-white',
+    borderClass: 'border-blue-300',
+    cardBorder: 'border-blue-200',
+    colorClass: 'text-blue-700',
+    textClass: 'text-blue-700',
+    bgLightClass: 'bg-blue-50/70',
+    bgLight: 'bg-blue-50/70',
+    description: 'Jenjang Pendidikan Menengah Pertama Kelas 7 - 9',
+  },
+  SMK: {
+    id: 'SMK',
+    code: 'SMK',
+    name: 'SMK',
+    shortTitle: 'SMK',
+    fullName: 'Sekolah Menengah Kejuruan (SMK)',
+    badgeClass: 'bg-purple-50 text-purple-700 border-purple-200',
+    badgeSolidClass: 'bg-purple-600 text-white',
+    borderClass: 'border-purple-300',
+    cardBorder: 'border-purple-200',
+    colorClass: 'text-purple-700',
+    textClass: 'text-purple-700',
+    bgLightClass: 'bg-purple-50/70',
+    bgLight: 'bg-purple-50/70',
+    description: 'Jenjang Pendidikan Kejuruan Kelas 10 - 12',
+  },
+};
+
+export const INSTITUTION_LIST: InstitutionConfig[] = [
+  INSTITUTION_CONFIGS.SD,
+  INSTITUTION_CONFIGS.SMP,
+  INSTITUTION_CONFIGS.SMK,
+];
 
 export const DOCUMENT_CONFIGS: Record<DocumentType, DocumentTypeConfig> = {
   kk: {
@@ -63,7 +137,7 @@ export const DOCUMENT_CONFIGS: Record<DocumentType, DocumentTypeConfig> = {
   },
 };
 
-export const DEFAULT_ACADEMIC_YEARS = [
+export const BASE_YEAR_CYCLES = [
   '2023/2024',
   '2024/2025',
   '2025/2026',
@@ -71,6 +145,21 @@ export const DEFAULT_ACADEMIC_YEARS = [
   '2027/2028',
   '2028/2029',
   '2029/2030',
+];
+
+export const DEFAULT_ACADEMIC_YEARS = [
+  'SD - 2026/2027',
+  'SD - 2025/2026',
+  'SD - 2024/2025',
+  'SD - 2023/2024',
+  'SMP - 2026/2027',
+  'SMP - 2025/2026',
+  'SMP - 2024/2025',
+  'SMP - 2023/2024',
+  'SMK - 2026/2027',
+  'SMK - 2025/2026',
+  'SMK - 2024/2025',
+  'SMK - 2023/2024',
 ];
 
 export const CLASS_OPTIONS = [

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   FileText,
   Users,
@@ -16,10 +16,11 @@ import {
   GraduationCap,
   Sparkles,
   Calendar,
+  School,
 } from 'lucide-react';
-import { Student, StudentDocument, DocumentType } from '../types';
-import { DOCUMENT_CONFIGS } from '../data/constants';
-import { calculateCompleteness, getAcademicYears } from '../services/storage';
+import { Student, StudentDocument, DocumentType, InstitutionLevel } from '../types';
+import { DOCUMENT_CONFIGS, INSTITUTION_CONFIGS, INSTITUTION_LIST } from '../data/constants';
+import { calculateCompleteness, getAcademicYears, parseInstitution, extractYearCycle } from '../services/storage';
 
 interface DashboardOverviewProps {
   students: Student[];
@@ -37,6 +38,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
   onNavigate,
 }) => {
   const [quickSearch, setQuickSearch] = useState('');
+  const [yearFilterInstitution, setYearFilterInstitution] = useState<'ALL' | InstitutionLevel>('ALL');
 
   // Key metrics calculation
   const totalStudents = students.length;
@@ -49,11 +51,27 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
   const studentCompletenessMap = students.map((s) => ({
     student: s,
     stats: calculateCompleteness(s, documents),
+    institution: s.institution || parseInstitution(s.classRoom || s.academicYear, 'SMP'),
   }));
 
   const fullyCompleteStudents = studentCompletenessMap.filter((item) => item.stats.isComplete).length;
   const schoolCompletenessPercentage =
     totalStudents > 0 ? Math.round((fullyCompleteStudents / totalStudents) * 100) : 0;
+
+  // Institution Breakdown Metrics
+  const institutionStats = useMemo(() => {
+    return INSTITUTION_LIST.map((inst) => {
+      const instStudents = studentCompletenessMap.filter((item) => item.institution === inst.code);
+      const completeCount = instStudents.filter((item) => item.stats.isComplete).length;
+      const percentage = instStudents.length > 0 ? Math.round((completeCount / instStudents.length) * 100) : 0;
+      return {
+        ...inst,
+        total: instStudents.length,
+        complete: completeCount,
+        percentage,
+      };
+    });
+  }, [studentCompletenessMap]);
 
   // Counts by document type
   const docTypeCounts: Record<DocumentType, number> = {
@@ -73,6 +91,8 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
           s.nis.includes(quickSearch) ||
           s.nisn.includes(quickSearch) ||
           s.nik.includes(quickSearch) ||
+          (s.parentPhone && s.parentPhone.includes(quickSearch)) ||
+          (s.institution && s.institution.toLowerCase().includes(quickSearch.toLowerCase())) ||
           s.classRoom.toLowerCase().includes(quickSearch.toLowerCase())
       )
     : [];
@@ -88,9 +108,16 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
 
   const yearBreakdown = allYears
     .map((yearName) => {
-      const yearStudents = students.filter(
-        (s) => s.classRoom === yearName || s.academicYear === yearName
-      );
+      const inst = parseInstitution(yearName, 'SMP');
+      const cycle = extractYearCycle(yearName);
+      const yearStudents = students.filter((s) => {
+        const sInst = s.institution || parseInstitution(s.classRoom || s.academicYear, 'SMP');
+        const sClass = s.classRoom || s.academicYear || '';
+        return (
+          sClass === yearName ||
+          (sInst === inst && extractYearCycle(sClass) === cycle)
+        );
+      });
       const completeInYear = yearStudents.filter(
         (s) => calculateCompleteness(s, documents).isComplete
       ).length;
@@ -100,12 +127,19 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
           : 0;
       return {
         yearName,
+        institution: inst,
+        cycle,
         total: yearStudents.length,
         complete: completeInYear,
         percentage,
       };
     })
-    .filter((item) => item.total > 0);
+    .filter((item) => {
+      if (yearFilterInstitution !== 'ALL' && item.institution !== yearFilterInstitution) {
+        return false;
+      }
+      return item.total > 0;
+    });
 
   const getDocIcon = (type: DocumentType) => {
     switch (type) {
@@ -135,14 +169,14 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
         <div className="relative z-10 max-w-3xl">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/20 border border-blue-400/30 text-blue-200 text-xs font-semibold mb-3">
             <ShieldCheck className="w-3.5 h-3.5" />
-            <span>Digitalisasi Dokumen Administrasi Siswa Terpadu</span>
+            <span>Digitalisasi Dokumen Administrasi Siswa Terpadu (SD, SMP, SMK)</span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white">
-            Pusat Pengelolaan Arsip Digital Siswa
+            Pusat Pengelolaan Arsip Digital 3 Lembaga
           </h1>
           <p className="mt-2 text-sm sm:text-base text-slate-300 leading-relaxed">
             Menyimpan, mengelola, mencari, dan memverifikasi dokumen penting (KK, KTP, Akta Kelahiran, Ijazah, KIP)
-            secara terstruktur, rapi, dan terlindungi.
+            secara terstruktur dan terpisah antara jenjang <strong>SD</strong>, <strong>SMP</strong>, dan <strong>SMK</strong>.
           </p>
 
           {/* Quick Search Bar */}
@@ -153,13 +187,13 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                 type="text"
                 value={quickSearch}
                 onChange={(e) => setQuickSearch(e.target.value)}
-                placeholder="Pencarian cepat: Ketik Nama Siswa, NIS, NISN, NIK, atau Kelas..."
+                placeholder="Pencarian cepat: Ketik Nama Siswa, NIS, NISN, NIK, atau Lembaga (SD/SMP/SMK)..."
                 className="w-full pl-12 pr-4 py-3 rounded-xl bg-white/10 backdrop-blur-md border border-white/20 text-white placeholder-slate-400 text-sm focus:outline-hidden focus:ring-2 focus:ring-blue-400 focus:bg-white/15 transition shadow-inner"
               />
               {quickSearch && (
                 <button
                   onClick={() => setQuickSearch('')}
-                  className="absolute right-3.5 top-3 text-xs bg-white/20 hover:bg-white/30 text-white px-2 py-1 rounded"
+                  className="absolute right-3.5 top-3 text-xs bg-white/20 hover:bg-white/30 text-white px-2 py-1 rounded cursor-pointer"
                 >
                   Bersihkan
                 </button>
@@ -180,6 +214,8 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                   ) : (
                     filteredStudents.map((std) => {
                       const stats = calculateCompleteness(std, documents);
+                      const stdInst = std.institution || parseInstitution(std.classRoom || std.academicYear, 'SMP');
+                      const instCfg = INSTITUTION_CONFIGS[stdInst];
                       return (
                         <div
                           key={std.id}
@@ -190,8 +226,13 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                           className="p-3.5 hover:bg-blue-50/80 cursor-pointer flex items-center justify-between transition"
                         >
                           <div>
-                            <div className="font-bold text-sm text-slate-900">{std.name}</div>
-                            <div className="text-xs text-slate-500 flex items-center gap-2 mt-0.5">
+                            <div className="flex items-center gap-2">
+                              <span className={`px-1.5 py-0.2 rounded text-[10px] font-extrabold border ${instCfg.badgeClass}`}>
+                                {instCfg.code}
+                              </span>
+                              <span className="font-bold text-sm text-slate-900">{std.name}</span>
+                            </div>
+                            <div className="text-xs text-slate-500 flex items-center gap-2 mt-1">
                               <span className="font-mono font-medium text-slate-700">NISN: {std.nisn}</span>
                               <span>•</span>
                               <span className="font-semibold text-blue-700">{std.classRoom}</span>
@@ -220,6 +261,47 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
             )}
           </div>
         </div>
+      </div>
+
+      {/* 3 Institutions Breakdown Overview Banner */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {institutionStats.map((inst) => (
+          <div
+            key={inst.code}
+            className={`p-4 rounded-2xl border bg-white shadow-xs hover:shadow-md transition ${inst.cardBorder}`}
+          >
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <span className={`px-2.5 py-0.5 rounded-lg text-xs font-extrabold border ${inst.badgeClass}`}>
+                  {inst.code}
+                </span>
+                <span className="font-extrabold text-sm text-slate-800">{inst.shortTitle}</span>
+              </div>
+              <span className="text-xs font-bold text-slate-500">{inst.percentage}% Lengkap</span>
+            </div>
+            <div className="flex items-baseline justify-between mt-3">
+              <div>
+                <span className="text-2xl font-extrabold text-slate-900">{inst.total}</span>
+                <span className="text-xs text-slate-500 ml-1.5">Siswa Terdaftar</span>
+              </div>
+              <span className="text-xs font-semibold text-emerald-600">
+                {inst.complete} Berkas Beres
+              </span>
+            </div>
+            <div className="w-full bg-slate-100 rounded-full h-2 mt-2 overflow-hidden">
+              <div
+                className={`h-2 rounded-full transition-all duration-500 ${
+                  inst.code === 'SD'
+                    ? 'bg-emerald-500'
+                    : inst.code === 'SMP'
+                    ? 'bg-blue-600'
+                    : 'bg-purple-600'
+                }`}
+                style={{ width: `${inst.percentage}%` }}
+              ></div>
+            </div>
+          </div>
+        ))}
       </div>
 
       {/* Metric Cards Grid */}
@@ -308,7 +390,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
             </div>
             <button
               onClick={() => onNavigate('students')}
-              className="text-xs font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1"
+              className="text-xs font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1 cursor-pointer"
             >
               <span>Lihat Semua Siswa</span>
               <ArrowRight className="w-3.5 h-3.5" />
@@ -362,21 +444,21 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
           <div className="mt-6 pt-5 border-t border-slate-100 flex flex-wrap gap-3">
             <button
               onClick={onAddNewStudent}
-              className="inline-flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs sm:text-sm font-bold shadow-xs hover:shadow transition"
+              className="inline-flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs sm:text-sm font-bold shadow-xs hover:shadow transition cursor-pointer"
             >
               <Users className="w-4 h-4" />
               <span>+ Tambah Siswa Baru</span>
             </button>
             <button
               onClick={() => onNavigate('students')}
-              className="inline-flex items-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs sm:text-sm font-semibold transition"
+              className="inline-flex items-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs sm:text-sm font-semibold transition cursor-pointer"
             >
               <Upload className="w-4 h-4 text-slate-600" />
-              <span>Buka Daftar Siswa & Upload</span>
+              <span>Buka Daftar Siswa &amp; Upload</span>
             </button>
             <button
               onClick={() => onNavigate('backup')}
-              className="inline-flex items-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs sm:text-sm font-semibold transition"
+              className="inline-flex items-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-xs sm:text-sm font-semibold transition cursor-pointer"
             >
               <Download className="w-4 h-4 text-slate-600" />
               <span>Cadangkan Data (Backup)</span>
@@ -387,42 +469,78 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
         {/* Right 1 Col: Kelengkapan per Tahun Pelajaran */}
         <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs flex flex-col justify-between">
           <div>
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-3">
               <h2 className="text-base font-extrabold text-slate-900 flex items-center gap-1.5">
                 <Calendar className="w-4 h-4 text-blue-600" />
-                <span>Progres per Tahun Pelajaran</span>
+                <span>Progres Tahun Pelajaran</span>
               </h2>
-              <span className="text-xs font-semibold text-slate-500">Arsip Masuk</span>
             </div>
 
-            <div className="space-y-3.5">
+            {/* Institution Filter Tabs for Year Progress */}
+            <div className="flex gap-1 mb-3 p-1 bg-slate-100 rounded-xl text-xs font-bold">
+              <button
+                type="button"
+                onClick={() => setYearFilterInstitution('ALL')}
+                className={`flex-1 py-1 text-center rounded-lg transition cursor-pointer ${
+                  yearFilterInstitution === 'ALL'
+                    ? 'bg-white text-slate-900 shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Semua
+              </button>
+              {INSTITUTION_LIST.map((inst) => (
+                <button
+                  key={inst.code}
+                  type="button"
+                  onClick={() => setYearFilterInstitution(inst.code)}
+                  className={`flex-1 py-1 text-center rounded-lg transition cursor-pointer ${
+                    yearFilterInstitution === inst.code
+                      ? `bg-white ${inst.colorClass} shadow-2xs font-extrabold`
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  {inst.code}
+                </button>
+              ))}
+            </div>
+
+            <div className="space-y-3 max-h-[380px] overflow-y-auto pr-1">
               {yearBreakdown.length === 0 ? (
                 <div className="p-4 text-center text-xs text-slate-400 bg-slate-50 rounded-xl">
-                  Belum ada data siswa untuk tahun pelajaran yang terdaftar.
+                  Belum ada data siswa untuk tahun pelajaran yang dipilih.
                 </div>
               ) : (
-                yearBreakdown.map((item) => (
-                  <div key={item.yearName} className="p-3 rounded-xl bg-slate-50 border border-slate-100">
-                    <div className="flex justify-between items-center text-xs mb-1.5">
-                      <span className="font-bold text-slate-800">Tahun Pelajaran {item.yearName}</span>
-                      <span className="font-semibold text-slate-600">
-                        {item.complete} / {item.total} Siswa Lengkap ({item.percentage}%)
-                      </span>
+                yearBreakdown.map((item) => {
+                  const instCfg = INSTITUTION_CONFIGS[item.institution];
+                  return (
+                    <div key={item.yearName} className="p-3 rounded-xl bg-slate-50 border border-slate-100">
+                      <div className="flex justify-between items-center text-xs mb-1.5">
+                        <div className="flex items-center gap-1.5">
+                          <span className={`px-1.5 py-0.2 rounded text-[10px] font-extrabold border ${instCfg.badgeClass}`}>
+                            {instCfg.code}
+                          </span>
+                          <span className="font-bold text-slate-800">{item.cycle}</span>
+                        </div>
+                        <span className="font-semibold text-slate-600">
+                          {item.complete}/{item.total} Siswa ({item.percentage}%)
+                        </span>
+                      </div>
+                      <div className="w-full bg-slate-200/80 rounded-full h-2 overflow-hidden">
+                        <div
+                          className={`h-2 rounded-full transition-all duration-500 ${
+                            item.percentage === 100
+                              ? 'bg-emerald-500'
+                              : item.percentage >= 50
+                              ? 'bg-blue-600'
+                              : 'bg-amber-500'
+                          }`}
+                          style={{ width: `${item.percentage}%` }}
+                        ></div>
+                      </div>
                     </div>
-                    <div className="w-full bg-slate-200/80 rounded-full h-2 overflow-hidden">
-                      <div
-                        className={`h-2 rounded-full transition-all duration-500 ${
-                          item.percentage === 100
-                            ? 'bg-emerald-500'
-                            : item.percentage >= 50
-                            ? 'bg-blue-600'
-                            : 'bg-amber-500'
-                        }`}
-                        style={{ width: `${item.percentage}%` }}
-                      ></div>
-                    </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           </div>
@@ -440,3 +558,4 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     </div>
   );
 };
+

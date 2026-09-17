@@ -28,8 +28,8 @@ import {
   Camera,
 } from 'lucide-react';
 import { Student, StudentDocument, DocumentType, VerificationStatus, UserRole, User as UserType } from '../types';
-import { DOCUMENT_CONFIGS } from '../data/constants';
-import { calculateCompleteness } from '../services/storage';
+import { DOCUMENT_CONFIGS, INSTITUTION_CONFIGS } from '../data/constants';
+import { calculateCompleteness, parseInstitution } from '../services/storage';
 import { generateSampleDocumentDataUrl } from '../utils/documentGenerator';
 import { downloadStudentZip, triggerDownload } from '../utils/zipExport';
 import { DocumentUploadModal } from './DocumentUploadModal';
@@ -182,8 +182,17 @@ export const StudentDossierModal: React.FC<StudentDossierModalProps> = ({
                 .join('')}
             </div>
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <h2 className="text-lg font-extrabold text-white tracking-tight">{student.name}</h2>
+                {(() => {
+                  const inst = student.institution || parseInstitution(student.classRoom || student.academicYear, 'SMP');
+                  const instCfg = INSTITUTION_CONFIGS[inst];
+                  return (
+                    <span className={`px-2 py-0.5 rounded text-[11px] font-extrabold border ${instCfg.badgeClass}`}>
+                      {instCfg.code} - {instCfg.shortTitle}
+                    </span>
+                  );
+                })()}
                 <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-blue-500/30 text-blue-200 border border-blue-400/30">
                   {student.classRoom}
                 </span>
@@ -217,7 +226,7 @@ export const StudentDossierModal: React.FC<StudentDossierModalProps> = ({
 
         {/* Profile Overview Card & Quick Stats */}
         <div className="p-5 bg-slate-50 border-b border-slate-200 shrink-0">
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs mb-4">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 text-xs mb-4">
             <div className="p-2.5 rounded-xl bg-white border border-slate-200">
               <span className="text-slate-400 text-[10px] uppercase font-bold block mb-0.5">Tempat / Tgl Lahir</span>
               <span className="font-semibold text-slate-800">
@@ -231,14 +240,20 @@ export const StudentDossierModal: React.FC<StudentDossierModalProps> = ({
               </span>
             </div>
             <div className="p-2.5 rounded-xl bg-white border border-slate-200">
-              <span className="text-slate-400 text-[10px] uppercase font-bold block mb-0.5">Orang Tua / Wali</span>
-              <span className="font-semibold text-slate-800 truncate block" title={student.parentName}>
-                {student.parentName}
+              <span className="text-slate-400 text-[10px] uppercase font-bold block mb-0.5">No. HP / WhatsApp</span>
+              <span className="font-semibold text-slate-800 truncate block" title={student.parentPhone}>
+                {student.parentPhone && student.parentPhone !== '-' ? student.parentPhone : '-'}
               </span>
             </div>
             <div className="p-2.5 rounded-xl bg-white border border-slate-200">
-              <span className="text-slate-400 text-[10px] uppercase font-bold block mb-0.5">Kontak / No. HP</span>
-              <span className="font-semibold text-slate-800">{student.parentPhone || '-'}</span>
+              <span className="text-slate-400 text-[10px] uppercase font-bold block mb-0.5">Tahun Pelajaran</span>
+              <span className="font-semibold text-blue-700 truncate block">
+                {student.classRoom}
+              </span>
+            </div>
+            <div className="p-2.5 rounded-xl bg-white border border-slate-200">
+              <span className="text-slate-400 text-[10px] uppercase font-bold block mb-0.5">Status Keaktifan</span>
+              <span className="font-semibold text-emerald-700">{student.status}</span>
             </div>
           </div>
 

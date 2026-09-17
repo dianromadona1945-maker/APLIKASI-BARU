@@ -32,10 +32,11 @@ export async function downloadStudentZip(student: Student, documents: StudentDoc
   const infoText = `INFORMASI ARSIP DIGITAL SISWA
 ===========================================
 Nama Lengkap : ${student.name}
+Lembaga      : ${student.institution || 'Umum'}
 NIS          : ${student.nis}
 NISN         : ${student.nisn}
 NIK          : ${student.nik}
-Kelas        : ${student.classRoom}
+Kelas / TP   : ${student.classRoom}
 TTL          : ${student.birthPlace}, ${student.birthDate}
 Alamat       : ${student.address}
 Orang Tua    : ${student.parentName} (${student.parentPhone})

@@ -1,6 +1,6 @@
 {
-  "name": "SMP dan SMK Al-Tafaqquh Fiddin",
-  "description": "Sistem terpadu pengelolaan dan penyimpanan digital dokumen administrasi siswa SMP dan SMK Al-Tafaqquh Fiddin: KK, KTP, Akta Kelahiran, Ijazah, KIP, riwayat log, dan cadangan data.",
+  "name": "SD, SMP & SMK Al-Tafaqquh Fiddin",
+  "description": "Sistem terpadu pengelolaan dan penyimpanan digital dokumen administrasi siswa untuk 3 lembaga (SD, SMP & SMK Al-Tafaqquh Fiddin): KK, KTP, Akta Kelahiran, Ijazah, KIP, riwayat log, dan cadangan data.",
   "requestFramePermissions": [
     "camera"
   ],

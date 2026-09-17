@@ -94,7 +94,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
             <span className="font-extrabold text-white text-base tracking-tight block">
               Sistem Arsip Dokumen Siswa
             </span>
-            <span className="text-[11px] text-slate-400 font-medium">SMP &amp; SMK Al-Tafaqquh Fiddin • Portal Masuk Petugas</span>
+            <span className="text-[11px] text-slate-400 font-medium">SD, SMP &amp; SMK Al-Tafaqquh Fiddin • Portal Masuk Petugas</span>
           </div>
         </div>
 
@@ -375,7 +375,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
 
       {/* Footer */}
       <footer className="relative z-10 w-full py-4 text-center text-xs text-slate-500 border-t border-slate-900 bg-slate-950/80">
-        <p>Sistem Pengelolaan Dokumen Siswa SMP dan SMK Al-Tafaqquh Fiddin • Tahun Pelajaran 2024/2025</p>
+        <p>Sistem Pengelolaan Dokumen Siswa SD, SMP &amp; SMK Al-Tafaqquh Fiddin</p>
       </footer>
     </div>
   );

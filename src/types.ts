@@ -44,6 +44,8 @@ export interface StudentDocument {
   version: number;
 }
 
+export type InstitutionLevel = 'SD' | 'SMP' | 'SMK';
+
 export interface Student {
   id: string;
   name: string;
@@ -53,6 +55,7 @@ export interface Student {
   birthPlace: string;
   birthDate: string;
   gender: 'L' | 'P';
+  institution: InstitutionLevel;
   classRoom: string;
   address: string;
   parentName: string;

@@ -130,7 +130,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
             <div>
               <span className="font-extrabold text-xs sm:text-sm tracking-tight text-white block leading-snug">
-                SMP &amp; SMK Al-Tafaqquh Fiddin
+                SD, SMP &amp; SMK Al-Tafaqquh Fiddin
               </span>
               <span className="text-[11px] text-blue-400 font-semibold tracking-wide block">
                 Sistem Arsip Dokumen
