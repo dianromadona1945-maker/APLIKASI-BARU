@@ -11,6 +11,7 @@ import {
   LayoutDashboard,
   History,
   Database,
+  KeyRound,
 } from 'lucide-react';
 import { User, StudentDocument, Student } from '../types';
 
@@ -18,6 +19,7 @@ interface NavbarProps {
   currentUser: User;
   onSwitchUserClick: () => void;
   onLogoutClick: () => void;
+  onEditProfileClick?: () => void;
   onLoginAsAdminClick?: () => void;
   onToggleSidebar: () => void;
   currentView: string;
@@ -29,6 +31,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   currentUser,
   onSwitchUserClick,
   onLogoutClick,
+  onEditProfileClick,
   onLoginAsAdminClick,
   onToggleSidebar,
   currentView,
@@ -125,7 +128,11 @@ export const Navbar: React.FC<NavbarProps> = ({
             </div>
 
             {/* User chip */}
-            <div className="flex items-center space-x-2.5 bg-slate-50 border border-slate-200 rounded-xl p-1.5 pr-2.5">
+            <div
+              onClick={onEditProfileClick}
+              title="Klik untuk mengubah nama atau kata sandi akun Anda"
+              className="flex items-center space-x-2.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl p-1.5 pr-2.5 cursor-pointer transition"
+            >
               <div
                 className={`w-8 h-8 rounded-lg font-bold flex items-center justify-center text-xs shadow-2xs ${
                   isAdmin ? 'bg-red-600 text-white' : 'bg-blue-600 text-white'
@@ -148,6 +155,19 @@ export const Navbar: React.FC<NavbarProps> = ({
                 </div>
               </div>
             </div>
+
+            {/* Quick Edit Profile & Password Button */}
+            {onEditProfileClick && (
+              <button
+                type="button"
+                onClick={onEditProfileClick}
+                title="Ubah Nama & Kata Sandi Akun Anda"
+                className="inline-flex items-center gap-1.5 px-2.5 py-2 text-xs font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg shadow-2xs transition cursor-pointer"
+              >
+                <KeyRound className="w-3.5 h-3.5 text-blue-600" />
+                <span className="hidden xl:inline">Ubah Profil &amp; Sandi</span>
+              </button>
+            )}
 
             {/* Quick Login Admin button if user is not admin */}
             {!isAdmin && onLoginAsAdminClick && (

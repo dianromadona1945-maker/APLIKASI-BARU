@@ -32,6 +32,7 @@ import { AuditLogsView } from './components/AuditLogsView';
 import { UserManagementView } from './components/UserManagementView';
 import { BackupSecurityView } from './components/BackupSecurityView';
 import { UserSwitcherModal } from './components/UserSwitcherModal';
+import { EditUserModal } from './components/EditUserModal';
 import { LoginView } from './components/LoginView';
 import { CheckCircle2, AlertCircle } from 'lucide-react';
 
@@ -65,8 +66,9 @@ export default function App() {
     student: null,
   });
 
-  // User Switcher Modal
+  // User Switcher & Edit Profile Modals
   const [isUserSwitcherOpen, setIsUserSwitcherOpen] = useState(false);
+  const [isEditProfileOpen, setIsEditProfileOpen] = useState(false);
 
   // Manage Academic Years Modal
   const [academicYears, setAcademicYears] = useState<string[]>(() => getAcademicYears());
@@ -218,11 +220,21 @@ export default function App() {
     showToast(`Beralih akun: ${newUser.name} (${newUser.role})`);
   };
 
-  const handleSaveNewUser = (user: User) => {
+  const handleSaveUser = (user: User) => {
+    const isExisting = users.some((u) => u.id === user.id);
     saveUser(user);
-    addAuditLog('UPDATE_USER', `Menambahkan akun petugas baru: ${user.name} (${user.role})`);
+    if (currentUser.id === user.id) {
+      setCurrentUser(user);
+      setCurrentUserState(user);
+    }
+    addAuditLog(
+      'UPDATE_USER',
+      isExisting
+        ? `Memperbarui akun petugas / kata sandi: ${user.name} (${user.role})`
+        : `Menambahkan akun petugas baru: ${user.name} (${user.role})`
+    );
     refreshAllData();
-    showToast('Petugas baru berhasil didaftarkan.');
+    showToast(isExisting ? `Profil & kata sandi ${user.name} berhasil diperbarui.` : 'Petugas baru berhasil didaftarkan.');
   };
 
   // Document Preview Open
@@ -282,6 +294,7 @@ export default function App() {
               currentUser={currentUser}
               onSwitchUserClick={() => setIsUserSwitcherOpen(true)}
               onLogoutClick={handleLogout}
+              onEditProfileClick={() => setIsEditProfileOpen(true)}
               onLoginAsAdminClick={currentUser.role !== 'admin' ? handleLoginAsAdminDirectly : undefined}
               onToggleSidebar={() => setIsMobileSidebarOpen((prev) => !prev)}
               currentView={currentView}
@@ -320,7 +333,7 @@ export default function App() {
               {currentView === 'users' && (
                 <UserManagementView
                   users={users}
-                  onSaveUser={handleSaveNewUser}
+                  onSaveUser={handleSaveUser}
                   currentUser={currentUser}
                 />
               )}
@@ -399,6 +412,14 @@ export default function App() {
             academicYears={academicYears}
             students={students}
             onYearsUpdated={(updated) => setAcademicYears(updated)}
+          />
+
+          {/* Edit Current User Profile & Password Modal */}
+          <EditUserModal
+            isOpen={isEditProfileOpen}
+            user={currentUser}
+            onClose={() => setIsEditProfileOpen(false)}
+            onSave={handleSaveUser}
           />
         </div>
       )}

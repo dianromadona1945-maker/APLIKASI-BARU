@@ -187,7 +187,7 @@ export function initializeStorage(): void {
         fileSize: 245000 + idx * 31000,
         fileDataUrl: generateSampleDocumentDataUrl(type, std1),
         uploadedAt: '2024-07-12T09:30:00.000Z',
-        uploadedBy: 'Petugas TU (Dewi R.)',
+        uploadedBy: 'Petugas TU (Mamat M.)',
         verificationStatus: 'verified',
         notes: 'Dokumen asli telah diverifikasi dan valid.',
         version: 1,
@@ -207,7 +207,7 @@ export function initializeStorage(): void {
         fileSize: 280000,
         fileDataUrl: generateSampleDocumentDataUrl(type, std2),
         uploadedAt: '2024-07-16T11:15:00.000Z',
-        uploadedBy: 'Petugas TU (Dewi R.)',
+        uploadedBy: 'Petugas TU (Mamat M.)',
         verificationStatus: type === 'ijazah' ? 'pending' : 'verified',
         notes: type === 'ijazah' ? 'Menunggu verifikasi stempel legalisir basah.' : 'Data valid.',
         version: 1,
@@ -227,7 +227,7 @@ export function initializeStorage(): void {
         fileSize: 310000,
         fileDataUrl: generateSampleDocumentDataUrl(type, std4),
         uploadedAt: '2024-07-18T14:40:00.000Z',
-        uploadedBy: 'Admin (Bambang S.)',
+        uploadedBy: 'Admin (Dian R.)',
         verificationStatus: 'verified',
         notes: type === 'kip' ? 'Kartu Indonesia Pintar terdaftar aktif di Dapodik.' : 'Valid.',
         version: 1,
@@ -247,7 +247,7 @@ export function initializeStorage(): void {
         fileSize: 290000,
         fileDataUrl: generateSampleDocumentDataUrl(type, std6),
         uploadedAt: '2024-07-20T16:00:00.000Z',
-        uploadedBy: 'Admin (Bambang S.)',
+        uploadedBy: 'Admin (Dian R.)',
         verificationStatus: 'verified',
         notes: 'Arsip lengkap semester awal.',
         version: 1,
@@ -475,12 +475,26 @@ export function getUsers(): User[] {
   let modified = validUsers.length !== rawUsers.length;
 
   const updatedUsers = validUsers.map((u) => {
-    if (!u.password) {
+    let item = { ...u };
+    // Migrate old placeholder names if present
+    if (item.role === 'admin' && (item.name.includes('Bambang') || item.nip === '198402152009031002')) {
+      item.name = 'Dian Romadona, S.Pd.';
+      item.nip = '';
+      item.email = 'dian.romadona@sekolah.sch.id';
       modified = true;
-      const defaultPass = u.role === 'admin' ? 'admin' : 'tu123';
-      return { ...u, password: defaultPass };
     }
-    return u;
+    if (item.role === 'petugas_tu' && (item.name.includes('Dewi') || item.nip === '199105182015022001')) {
+      item.name = 'Mamat Miftahurrahmat, S.Pd.';
+      item.nip = '';
+      item.email = 'mamat.miftahurrahmat@sekolah.sch.id';
+      modified = true;
+    }
+    if (!item.password) {
+      modified = true;
+      const defaultPass = item.role === 'admin' ? 'admin' : 'tu123';
+      item.password = defaultPass;
+    }
+    return item;
   });
 
   if (modified) {
@@ -499,12 +513,34 @@ export function saveUser(user: User): void {
     users.push(user);
   }
   localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(users));
+
+  // If current logged-in user is this user, keep current user in sync
+  const current = getCurrentUser();
+  if (current.id === user.id) {
+    setCurrentUser(user);
+  }
 }
 
 export function getCurrentUser(): User {
   initializeStorage();
   const raw = localStorage.getItem(STORAGE_KEYS.CURRENT_USER);
-  return raw ? JSON.parse(raw) : INITIAL_USERS[0];
+  if (!raw) return INITIAL_USERS[0];
+  try {
+    const user: User = JSON.parse(raw);
+    if (user.role === 'admin' && user.name.includes('Bambang')) {
+      const updated: User = { ...user, name: 'Dian Romadona, S.Pd.', nip: '', email: 'dian.romadona@sekolah.sch.id' };
+      setCurrentUser(updated);
+      return updated;
+    }
+    if (user.role === 'petugas_tu' && user.name.includes('Dewi')) {
+      const updated: User = { ...user, name: 'Mamat Miftahurrahmat, S.Pd.', nip: '', email: 'mamat.miftahurrahmat@sekolah.sch.id' };
+      setCurrentUser(updated);
+      return updated;
+    }
+    return user;
+  } catch {
+    return INITIAL_USERS[0];
+  }
 }
 
 export function setCurrentUser(user: User): void {
@@ -539,21 +575,14 @@ export function loginUser(
     };
   }
 
-  // Check password
+  // Check password strictly against user.password
   const expectedPass = user.password || (user.role === 'admin' ? 'admin' : 'tu123');
-  const allowedPasswords = [expectedPass, 'admin', 'admin123'];
-
-  const isPasswordValid =
-    passwordInput === expectedPass ||
-    (user.role === 'admin' && (passwordInput === 'admin' || passwordInput === 'admin123'));
+  const isPasswordValid = passwordInput === expectedPass;
 
   if (!isPasswordValid) {
     return {
       success: false,
-      error:
-        user.role === 'admin'
-          ? 'Kata sandi Administrator keliru. (Kata sandi bawaan: admin atau admin123)'
-          : 'Kata sandi tidak sesuai. Silakan periksa kembali kata sandi Anda.',
+      error: 'Kata sandi tidak sesuai. Silakan periksa kembali kata sandi Anda.',
     };
   }
 

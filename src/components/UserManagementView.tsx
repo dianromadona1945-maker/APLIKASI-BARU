@@ -1,6 +1,18 @@
 import React, { useState } from 'react';
-import { ShieldCheck, UserPlus, Users, Lock, Key, Check, AlertCircle, ShieldAlert } from 'lucide-react';
+import {
+  ShieldCheck,
+  UserPlus,
+  Users,
+  Lock,
+  Key,
+  KeyRound,
+  Check,
+  AlertCircle,
+  ShieldAlert,
+  Edit3,
+} from 'lucide-react';
 import { User, UserRole } from '../types';
+import { EditUserModal } from './EditUserModal';
 
 interface UserManagementViewProps {
   users: User[];
@@ -14,12 +26,14 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({
   currentUser,
 }) => {
   const [showAddModal, setShowAddModal] = useState(false);
+  const [editingUser, setEditingUser] = useState<User | null>(null);
   const [formData, setFormData] = useState({
     name: '',
     username: '',
     email: '',
     role: 'petugas_tu' as UserRole,
     nip: '',
+    password: '',
   });
 
   const handleCreateUser = (e: React.FormEvent) => {
@@ -28,11 +42,12 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({
 
     const newUser: User = {
       id: `usr-${Date.now().toString().slice(-6)}`,
-      name: formData.name,
-      username: formData.username.toLowerCase().replace(/\s+/g, '_'),
-      email: formData.email || `${formData.username}@sekolah.sch.id`,
+      name: formData.name.trim(),
+      username: formData.username.toLowerCase().replace(/\s+/g, '_').trim(),
+      email: formData.email.trim() || `${formData.username.toLowerCase()}@sekolah.sch.id`,
       role: formData.role,
-      nip: formData.nip,
+      nip: formData.nip.trim(),
+      password: formData.password ? formData.password : (formData.role === 'admin' ? 'admin' : 'tu123'),
       active: true,
       lastLogin: 'Baru Dibuat',
     };
@@ -45,6 +60,7 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({
       email: '',
       role: 'petugas_tu',
       nip: '',
+      password: '',
     });
   };
 
@@ -113,6 +129,7 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({
                 <th className="py-3 px-4">NIP</th>
                 <th className="py-3 px-4">Peran / Hak Akses</th>
                 <th className="py-3 px-4">Status &amp; Terakhir Aktif</th>
+                <th className="py-3 px-4 text-center">Tindakan / Ubah Sandi</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -160,6 +177,17 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({
                         <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
                         <span>{user.lastLogin || 'Aktif'}</span>
                       </div>
+                    </td>
+                    <td className="py-3.5 px-4 whitespace-nowrap text-center">
+                      <button
+                        type="button"
+                        onClick={() => setEditingUser(user)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 transition shadow-2xs cursor-pointer"
+                        title={`Ubah profil atau kata sandi untuk ${user.name}`}
+                      >
+                        <Edit3 className="w-3.5 h-3.5" />
+                        <span>Ubah Nama &amp; Sandi</span>
+                      </button>
                     </td>
                   </tr>
                 );
@@ -285,6 +313,18 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({
                 />
               </div>
 
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Kata Sandi Awal</label>
+                <input
+                  type="text"
+                  value={formData.password}
+                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                  placeholder={formData.role === 'admin' ? 'Bawaan: admin' : 'Bawaan: tu123'}
+                  className="w-full p-2.5 bg-slate-50 rounded-xl border border-slate-200 focus:bg-white font-mono"
+                />
+                <p className="text-[10px] text-slate-500 mt-0.5">Biarkan kosong untuk menggunakan kata sandi bawaan.</p>
+              </div>
+
               <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
                 <button
                   type="button"
@@ -304,6 +344,17 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* Edit User & Password Modal */}
+      <EditUserModal
+        isOpen={!!editingUser}
+        user={editingUser}
+        onClose={() => setEditingUser(null)}
+        onSave={(updated) => {
+          onSaveUser(updated);
+          setEditingUser(null);
+        }}
+      />
     </div>
   );
 };
