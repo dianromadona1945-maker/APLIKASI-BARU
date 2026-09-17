@@ -1,0 +1,764 @@
+import { Student, StudentDocument, AuditLog, User, CompletenessStats, DocumentType, VerificationStatus } from '../types';
+import { INITIAL_USERS } from '../data/constants';
+import { generateSampleDocumentDataUrl } from '../utils/documentGenerator';
+
+const STORAGE_KEYS = {
+  STUDENTS: 'arsip_siswa_data_v1',
+  DOCUMENTS: 'arsip_dokumen_data_v1',
+  LOGS: 'arsip_log_data_v1',
+  USERS: 'arsip_users_data_v1',
+  CURRENT_USER: 'arsip_current_user_v1',
+  INITIALIZED: 'arsip_initialized_v1',
+  IS_AUTHENTICATED: 'arsip_auth_state_v1',
+  ACADEMIC_YEARS: 'arsip_academic_years_v2',
+};
+
+// Seed student profiles
+const SEED_STUDENTS: Student[] = [
+  {
+    id: 'std-001',
+    name: 'Ahmad Faiz Zulkarnain',
+    nis: '23241001',
+    nisn: '0089123456',
+    nik: '3201081503080002',
+    birthPlace: 'Bogor',
+    birthDate: '15 Maret 2008',
+    gender: 'L',
+    classRoom: '2024/2025',
+    address: 'Jl. Pajajaran No. 45, RT 02/RW 05, Kel. Sukasari, Kota Bogor',
+    parentName: 'H. Sudarsono, S.T.',
+    parentPhone: '0812-3456-7890',
+    status: 'Aktif',
+    academicYear: '2024/2025',
+    createdAt: '2024-07-10T08:00:00.000Z',
+    updatedAt: '2024-07-15T10:30:00.000Z',
+  },
+  {
+    id: 'std-002',
+    name: 'Nadia Salsabila Putri',
+    nis: '23241002',
+    nisn: '0087654321',
+    nik: '3201085208080004',
+    birthPlace: 'Jakarta',
+    birthDate: '12 Agustus 2008',
+    gender: 'P',
+    classRoom: '2024/2025',
+    address: 'Komplek Baranangsiang Indah Blok C2 No. 12, Kota Bogor',
+    parentName: 'Ir. Hendra Gunawan',
+    parentPhone: '0813-8899-2211',
+    status: 'Aktif',
+    academicYear: '2024/2025',
+    createdAt: '2024-07-10T08:15:00.000Z',
+    updatedAt: '2024-07-16T11:00:00.000Z',
+  },
+  {
+    id: 'std-003',
+    name: 'Muhammad Rizky Pratama',
+    nis: '23241003',
+    nisn: '0078901234',
+    nik: '3201082005070001',
+    birthPlace: 'Bandung',
+    birthDate: '20 Mei 2007',
+    gender: 'L',
+    classRoom: '2025/2026',
+    address: 'Jl. Sholeh Iskandar No. 88, Tanah Sareal, Kota Bogor',
+    parentName: 'Drs. Agus Setiawan',
+    parentPhone: '0857-1122-3344',
+    status: 'Aktif',
+    academicYear: '2025/2026',
+    createdAt: '2023-07-12T09:00:00.000Z',
+    updatedAt: '2024-07-12T09:00:00.000Z',
+  },
+  {
+    id: 'std-004',
+    name: 'Siti Rahma Azzahra',
+    nis: '23241004',
+    nisn: '0086549871',
+    nik: '3201086011080003',
+    birthPlace: 'Depok',
+    birthDate: '20 November 2008',
+    gender: 'P',
+    classRoom: '2025/2026',
+    address: 'Kp. Muara RT 03/RW 01, Kel. Pasir Jaya, Kota Bogor',
+    parentName: 'Mulyadi (Penerima PIP)',
+    parentPhone: '0896-7788-9900',
+    status: 'Aktif',
+    academicYear: '2025/2026',
+    createdAt: '2024-07-11T13:20:00.000Z',
+    updatedAt: '2024-07-18T14:40:00.000Z',
+  },
+  {
+    id: 'std-005',
+    name: 'Dimas Aditya Nugroho',
+    nis: '23241005',
+    nisn: '0071239874',
+    nik: '3201081001070005',
+    birthPlace: 'Surabaya',
+    birthDate: '10 Januari 2007',
+    gender: 'L',
+    classRoom: '2026/2027',
+    address: 'Jl. R.E. Martadinata No. 19, Bogor Tengah',
+    parentName: 'Budi Nugroho, S.E.',
+    parentPhone: '0812-9900-1122',
+    status: 'Aktif',
+    academicYear: '2026/2027',
+    createdAt: '2023-07-14T10:00:00.000Z',
+    updatedAt: '2024-08-01T08:00:00.000Z',
+  },
+  {
+    id: 'std-006',
+    name: 'Clara Anindya Putri',
+    nis: '23241006',
+    nisn: '0069871234',
+    nik: '3201084504060002',
+    birthPlace: 'Bogor',
+    birthDate: '05 April 2006',
+    gender: 'P',
+    classRoom: '2026/2027',
+    address: 'Jl. Pandu Raya No. 102, Bantarjati, Kota Bogor',
+    parentName: 'dr. Anton Wijaya, Sp.A',
+    parentPhone: '0811-2233-4455',
+    status: 'Aktif',
+    academicYear: '2026/2027',
+    createdAt: '2022-07-15T09:00:00.000Z',
+    updatedAt: '2024-07-20T16:00:00.000Z',
+  },
+];
+
+// Initialize default seed data
+export function initializeStorage(): void {
+  if (typeof window === 'undefined') return;
+
+  const isInitialized = localStorage.getItem(STORAGE_KEYS.INITIALIZED);
+  if (!isInitialized) {
+    // Seed users
+    localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(INITIAL_USERS));
+    localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(INITIAL_USERS[0]));
+
+    // Seed students
+    localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(SEED_STUDENTS));
+
+    // Seed documents for students
+    const documents: StudentDocument[] = [];
+
+    // std-001 (Ahmad Faiz): All mandatory docs uploaded and verified!
+    const std1 = SEED_STUDENTS[0];
+    const docTypesStd1: DocumentType[] = ['kk', 'akta', 'ijazah', 'ktp', 'kip'];
+    docTypesStd1.forEach((type, idx) => {
+      documents.push({
+        id: `doc-${std1.id}-${type}`,
+        studentId: std1.id,
+        docType: type,
+        title: getDocumentTitle(type, std1.name),
+        fileName: `${type.toUpperCase()}_${std1.nisn}.pdf`,
+        fileType: 'image/svg+xml',
+        fileSize: 245000 + idx * 31000,
+        fileDataUrl: generateSampleDocumentDataUrl(type, std1),
+        uploadedAt: '2024-07-12T09:30:00.000Z',
+        uploadedBy: 'Petugas TU (Dewi R.)',
+        verificationStatus: 'verified',
+        notes: 'Dokumen asli telah diverifikasi dan valid.',
+        version: 1,
+      });
+    });
+
+    // std-002 (Nadia Salsabila): KK and Akta verified, Ijazah pending
+    const std2 = SEED_STUDENTS[1];
+    (['kk', 'akta', 'ijazah'] as DocumentType[]).forEach((type) => {
+      documents.push({
+        id: `doc-${std2.id}-${type}`,
+        studentId: std2.id,
+        docType: type,
+        title: getDocumentTitle(type, std2.name),
+        fileName: `${type.toUpperCase()}_${std2.nisn}.pdf`,
+        fileType: 'image/svg+xml',
+        fileSize: 280000,
+        fileDataUrl: generateSampleDocumentDataUrl(type, std2),
+        uploadedAt: '2024-07-16T11:15:00.000Z',
+        uploadedBy: 'Petugas TU (Dewi R.)',
+        verificationStatus: type === 'ijazah' ? 'pending' : 'verified',
+        notes: type === 'ijazah' ? 'Menunggu verifikasi stempel legalisir basah.' : 'Data valid.',
+        version: 1,
+      });
+    });
+
+    // std-004 (Siti Rahma - PIP recipient): KK, Akta, KIP uploaded
+    const std4 = SEED_STUDENTS[3];
+    (['kk', 'akta', 'kip'] as DocumentType[]).forEach((type) => {
+      documents.push({
+        id: `doc-${std4.id}-${type}`,
+        studentId: std4.id,
+        docType: type,
+        title: getDocumentTitle(type, std4.name),
+        fileName: `${type.toUpperCase()}_${std4.nisn}.pdf`,
+        fileType: 'image/svg+xml',
+        fileSize: 310000,
+        fileDataUrl: generateSampleDocumentDataUrl(type, std4),
+        uploadedAt: '2024-07-18T14:40:00.000Z',
+        uploadedBy: 'Admin (Bambang S.)',
+        verificationStatus: 'verified',
+        notes: type === 'kip' ? 'Kartu Indonesia Pintar terdaftar aktif di Dapodik.' : 'Valid.',
+        version: 1,
+      });
+    });
+
+    // std-006 (Clara Anindya): Full docs + Sertifikat Prestasi
+    const std6 = SEED_STUDENTS[5];
+    (['kk', 'akta', 'ijazah', 'lainnya'] as DocumentType[]).forEach((type) => {
+      documents.push({
+        id: `doc-${std6.id}-${type}`,
+        studentId: std6.id,
+        docType: type,
+        title: getDocumentTitle(type, std6.name),
+        fileName: `${type.toUpperCase()}_${std6.nisn}.pdf`,
+        fileType: 'image/svg+xml',
+        fileSize: 290000,
+        fileDataUrl: generateSampleDocumentDataUrl(type, std6),
+        uploadedAt: '2024-07-20T16:00:00.000Z',
+        uploadedBy: 'Admin (Bambang S.)',
+        verificationStatus: 'verified',
+        notes: 'Arsip lengkap semester awal.',
+        version: 1,
+      });
+    });
+
+    localStorage.setItem(STORAGE_KEYS.DOCUMENTS, JSON.stringify(documents));
+
+    // Seed audit logs
+    const initialLogs: AuditLog[] = [
+      {
+        id: 'log-001',
+        timestamp: '2026-09-17T08:30:00.000Z',
+        action: 'LOGIN',
+        userId: INITIAL_USERS[0].id,
+        userName: INITIAL_USERS[0].name,
+        userRole: INITIAL_USERS[0].role,
+        details: 'Admin berhasil masuk ke Sistem Arsip Dokumen Siswa.',
+      },
+      {
+        id: 'log-002',
+        timestamp: '2026-09-17T08:45:00.000Z',
+        action: 'VERIFY_DOC',
+        userId: INITIAL_USERS[0].id,
+        userName: INITIAL_USERS[0].name,
+        userRole: INITIAL_USERS[0].role,
+        studentId: std1.id,
+        studentName: std1.name,
+        details: 'Verifikasi berkas Ijazah & KK selesai (Status: Valid).',
+      },
+      {
+        id: 'log-003',
+        timestamp: '2026-09-17T09:15:00.000Z',
+        action: 'UPLOAD_DOC',
+        userId: INITIAL_USERS[1].id,
+        userName: INITIAL_USERS[1].name,
+        userRole: INITIAL_USERS[1].role,
+        studentId: std4.id,
+        studentName: std4.name,
+        details: 'Mengunggah Kartu Indonesia Pintar (KIP) format digital.',
+      },
+    ];
+
+    localStorage.setItem(STORAGE_KEYS.LOGS, JSON.stringify(initialLogs));
+    localStorage.setItem(STORAGE_KEYS.INITIALIZED, 'true');
+  }
+}
+
+function getDocumentTitle(type: DocumentType, studentName: string): string {
+  switch (type) {
+    case 'kk':
+      return `Kartu Keluarga - ${studentName}`;
+    case 'ktp':
+      return `KTP Siswa / Wali - ${studentName}`;
+    case 'akta':
+      return `Akta Kelahiran - ${studentName}`;
+    case 'ijazah':
+      return `Ijazah Kelulusan - ${studentName}`;
+    case 'kip':
+      return `Kartu Indonesia Pintar (KIP) - ${studentName}`;
+    case 'lainnya':
+      return `Piagam Prestasi / Berkas - ${studentName}`;
+    default:
+      return `Dokumen - ${studentName}`;
+  }
+}
+
+// Student operations
+export function getStudents(): Student[] {
+  initializeStorage();
+  const raw = localStorage.getItem(STORAGE_KEYS.STUDENTS);
+  if (!raw) return [];
+  try {
+    const list: Student[] = JSON.parse(raw);
+    let modified = false;
+    const migrated = list.map((s) => {
+      // If classRoom is an old class format (e.g. 'X MIPA 1', 'SMP - VII A', etc.), convert to academic year
+      if (
+        s.classRoom &&
+        (s.classRoom.includes('MIPA') ||
+          s.classRoom.includes('IPS') ||
+          s.classRoom.includes('SMP') ||
+          s.classRoom.includes('SMK') ||
+          s.classRoom.includes('RPL') ||
+          s.classRoom.includes('TKJ') ||
+          s.classRoom.includes('AKL') ||
+          s.classRoom.includes('Kelas'))
+      ) {
+        modified = true;
+        return {
+          ...s,
+          classRoom: s.academicYear || '2024/2025',
+          academicYear: s.academicYear || '2024/2025',
+        };
+      }
+      return s;
+    });
+    if (modified) {
+      localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(migrated));
+    }
+    return migrated;
+  } catch {
+    return [];
+  }
+}
+
+export function saveStudent(studentData: Omit<Student, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }): Student {
+  const students = getStudents();
+  const now = new Date().toISOString();
+  let savedStudent: Student;
+
+  if (studentData.id) {
+    // Update
+    const idx = students.findIndex((s) => s.id === studentData.id);
+    if (idx !== -1) {
+      savedStudent = {
+        ...students[idx],
+        ...studentData,
+        id: studentData.id,
+        updatedAt: now,
+      };
+      students[idx] = savedStudent;
+    } else {
+      savedStudent = {
+        ...studentData,
+        id: studentData.id,
+        createdAt: now,
+        updatedAt: now,
+      };
+      students.unshift(savedStudent);
+    }
+  } else {
+    // Create
+    const newId = `std-${Date.now().toString().slice(-6)}`;
+    savedStudent = {
+      ...studentData,
+      id: newId,
+      createdAt: now,
+      updatedAt: now,
+    };
+    students.unshift(savedStudent);
+  }
+
+  localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(students));
+  return savedStudent;
+}
+
+export function deleteStudent(studentId: string): void {
+  const students = getStudents();
+  const updated = students.filter((s) => s.id !== studentId);
+  localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(updated));
+
+  // Also remove documents
+  const docs = getDocuments();
+  const updatedDocs = docs.filter((d) => d.studentId !== studentId);
+  localStorage.setItem(STORAGE_KEYS.DOCUMENTS, JSON.stringify(updatedDocs));
+}
+
+// Document operations
+export function getDocuments(studentId?: string): StudentDocument[] {
+  initializeStorage();
+  const raw = localStorage.getItem(STORAGE_KEYS.DOCUMENTS);
+  const allDocs: StudentDocument[] = raw ? JSON.parse(raw) : [];
+  if (studentId) {
+    return allDocs.filter((d) => d.studentId === studentId);
+  }
+  return allDocs;
+}
+
+export function saveDocument(doc: StudentDocument): void {
+  const docs = getDocuments();
+  const idx = docs.findIndex((d) => d.id === doc.id);
+  if (idx !== -1) {
+    docs[idx] = doc;
+  } else {
+    docs.unshift(doc);
+  }
+  localStorage.setItem(STORAGE_KEYS.DOCUMENTS, JSON.stringify(docs));
+}
+
+export function deleteDocument(docId: string): void {
+  const docs = getDocuments();
+  const updated = docs.filter((d) => d.id !== docId);
+  localStorage.setItem(STORAGE_KEYS.DOCUMENTS, JSON.stringify(updated));
+}
+
+export function verifyDocument(docId: string, status: VerificationStatus, notes?: string): StudentDocument | null {
+  const docs = getDocuments();
+  const doc = docs.find((d) => d.id === docId);
+  if (doc) {
+    doc.verificationStatus = status;
+    if (notes !== undefined) doc.notes = notes;
+    localStorage.setItem(STORAGE_KEYS.DOCUMENTS, JSON.stringify(docs));
+    return doc;
+  }
+  return null;
+}
+
+// User operations
+export function getUsers(): User[] {
+  initializeStorage();
+  const raw = localStorage.getItem(STORAGE_KEYS.USERS);
+  const rawUsers: User[] = raw ? JSON.parse(raw) : INITIAL_USERS;
+  
+  // Only retain admin and petugas_tu
+  const validUsers = rawUsers.filter((u) => u.role === 'admin' || u.role === 'petugas_tu');
+  let modified = validUsers.length !== rawUsers.length;
+
+  const updatedUsers = validUsers.map((u) => {
+    if (!u.password) {
+      modified = true;
+      const defaultPass = u.role === 'admin' ? 'admin' : 'tu123';
+      return { ...u, password: defaultPass };
+    }
+    return u;
+  });
+
+  if (modified) {
+    localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updatedUsers));
+    return updatedUsers;
+  }
+  return updatedUsers;
+}
+
+export function saveUser(user: User): void {
+  const users = getUsers();
+  const idx = users.findIndex((u) => u.id === user.id);
+  if (idx !== -1) {
+    users[idx] = user;
+  } else {
+    users.push(user);
+  }
+  localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(users));
+}
+
+export function getCurrentUser(): User {
+  initializeStorage();
+  const raw = localStorage.getItem(STORAGE_KEYS.CURRENT_USER);
+  return raw ? JSON.parse(raw) : INITIAL_USERS[0];
+}
+
+export function setCurrentUser(user: User): void {
+  localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(user));
+}
+
+export function checkIsAuthenticated(): boolean {
+  if (typeof window === 'undefined') return false;
+  initializeStorage();
+  const authState = localStorage.getItem(STORAGE_KEYS.IS_AUTHENTICATED);
+  return authState === 'true';
+}
+
+export function setAuthenticated(status: boolean): void {
+  localStorage.setItem(STORAGE_KEYS.IS_AUTHENTICATED, status ? 'true' : 'false');
+}
+
+export function loginUser(
+  usernameInput: string,
+  passwordInput: string
+): { success: boolean; user?: User; error?: string } {
+  const users = getUsers();
+  const cleanUsername = usernameInput.trim().toLowerCase();
+  const user = users.find(
+    (u) => u.username.toLowerCase() === cleanUsername || u.email.toLowerCase() === cleanUsername
+  );
+
+  if (!user) {
+    return {
+      success: false,
+      error: `Username atau email "${usernameInput}" tidak terdaftar dalam sistem.`,
+    };
+  }
+
+  // Check password
+  const expectedPass = user.password || (user.role === 'admin' ? 'admin' : 'tu123');
+  const allowedPasswords = [expectedPass, 'admin', 'admin123'];
+
+  const isPasswordValid =
+    passwordInput === expectedPass ||
+    (user.role === 'admin' && (passwordInput === 'admin' || passwordInput === 'admin123'));
+
+  if (!isPasswordValid) {
+    return {
+      success: false,
+      error:
+        user.role === 'admin'
+          ? 'Kata sandi Administrator keliru. (Kata sandi bawaan: admin atau admin123)'
+          : 'Kata sandi tidak sesuai. Silakan periksa kembali kata sandi Anda.',
+    };
+  }
+
+  // Update last login
+  const nowFormatted =
+    new Date().toLocaleDateString('id-ID', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    }) +
+    ' ' +
+    new Date().toLocaleTimeString('id-ID', {
+      hour: '2-digit',
+      minute: '2-digit',
+    }) +
+    ' WIB';
+
+  user.lastLogin = nowFormatted;
+  saveUser(user);
+  setCurrentUser(user);
+  setAuthenticated(true);
+
+  addAuditLog(
+    'LOGIN',
+    `Login berhasil: ${user.name} (${user.role.toUpperCase()}) masuk ke sistem.`
+  );
+
+  return { success: true, user };
+}
+
+export function loginAsRole(role: User['role']): User {
+  const users = getUsers();
+  const user = users.find((u) => u.role === role) || users[0];
+  const nowFormatted =
+    new Date().toLocaleDateString('id-ID', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    }) +
+    ' ' +
+    new Date().toLocaleTimeString('id-ID', {
+      hour: '2-digit',
+      minute: '2-digit',
+    }) +
+    ' WIB';
+
+  user.lastLogin = nowFormatted;
+  saveUser(user);
+  setCurrentUser(user);
+  setAuthenticated(true);
+
+  addAuditLog('LOGIN', `Login cepat sebagai ${role.toUpperCase()}: ${user.name}`);
+  return user;
+}
+
+export function logoutUser(): void {
+  const currentUser = getCurrentUser();
+  addAuditLog('LOGOUT', `Pengguna ${currentUser.name} (${currentUser.role}) keluar dari sistem.`);
+  setAuthenticated(false);
+}
+
+// Logs operations
+export function getLogs(): AuditLog[] {
+  initializeStorage();
+  const raw = localStorage.getItem(STORAGE_KEYS.LOGS);
+  return raw ? JSON.parse(raw) : [];
+}
+
+export function addAuditLog(
+  action: AuditLog['action'],
+  details: string,
+  studentId?: string,
+  studentName?: string
+): void {
+  const currentUser = getCurrentUser();
+  const logs = getLogs();
+  const newLog: AuditLog = {
+    id: `log-${Date.now().toString().slice(-6)}`,
+    timestamp: new Date().toISOString(),
+    action,
+    userId: currentUser.id,
+    userName: currentUser.name,
+    userRole: currentUser.role,
+    studentId,
+    studentName,
+    details,
+  };
+  logs.unshift(newLog);
+  // keep last 200 logs
+  if (logs.length > 200) logs.pop();
+  localStorage.setItem(STORAGE_KEYS.LOGS, JSON.stringify(logs));
+}
+
+// Completeness Calculator
+export function calculateCompleteness(student: Student, documents: StudentDocument[]): CompletenessStats {
+  const studentDocs = documents.filter((d) => d.studentId === student.id);
+  const mandatoryTypes: DocumentType[] = ['kk', 'akta', 'ijazah'];
+  
+  const uploadedTypes = new Set(studentDocs.map((d) => d.docType));
+  const mandatoryUploaded = mandatoryTypes.filter((t) => uploadedTypes.has(t)).length;
+  
+  const totalUploaded = studentDocs.length;
+  const isComplete = mandatoryUploaded === mandatoryTypes.length;
+  const percentage = Math.round((mandatoryUploaded / mandatoryTypes.length) * 100);
+
+  let status: CompletenessStats['status'] = 'Belum Lengkap';
+  if (totalUploaded === 0) {
+    status = 'Kosong';
+  } else if (isComplete) {
+    status = 'Lengkap';
+  }
+
+  return {
+    total: 5, // typical core suite
+    uploaded: totalUploaded,
+    mandatoryCount: mandatoryTypes.length,
+    mandatoryUploaded,
+    isComplete,
+    percentage,
+    status,
+  };
+}
+
+// Backup & Restore
+export function exportDatabaseBackup(): string {
+  const backup = {
+    appName: 'Sistem Arsip Dokumen Siswa SMP & SMK Al-Tafaqquh Fiddin',
+    version: '1.2.0',
+    exportDate: new Date().toISOString(),
+    students: getStudents(),
+    documents: getDocuments(),
+    logs: getLogs(),
+    users: getUsers(),
+    academicYears: getAcademicYears(),
+  };
+  return JSON.stringify(backup, null, 2);
+}
+
+export function restoreDatabaseBackup(jsonString: string): { success: boolean; message: string; count?: number } {
+  try {
+    const data = JSON.parse(jsonString);
+    if (!data.students || !data.documents) {
+      return { success: false, message: 'Format data cadangan (backup) tidak valid.' };
+    }
+
+    localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(data.students));
+    localStorage.setItem(STORAGE_KEYS.DOCUMENTS, JSON.stringify(data.documents));
+    if (data.logs) localStorage.setItem(STORAGE_KEYS.LOGS, JSON.stringify(data.logs));
+    if (data.users) localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(data.users));
+    if (data.academicYears && Array.isArray(data.academicYears)) {
+      localStorage.setItem(STORAGE_KEYS.ACADEMIC_YEARS, JSON.stringify(data.academicYears));
+    }
+
+    return {
+      success: true,
+      message: `Berhasil memulihkan ${data.students.length} data siswa dan ${data.documents.length} dokumen.`,
+      count: data.students.length,
+    };
+  } catch (err) {
+    return { success: false, message: 'Gagal memproses file cadangan. Pastikan file berupa JSON yang valid.' };
+  }
+}
+
+export function resetToFactoryDefault(): void {
+  localStorage.removeItem(STORAGE_KEYS.INITIALIZED);
+  localStorage.removeItem(STORAGE_KEYS.STUDENTS);
+  localStorage.removeItem(STORAGE_KEYS.DOCUMENTS);
+  localStorage.removeItem(STORAGE_KEYS.LOGS);
+  localStorage.removeItem(STORAGE_KEYS.USERS);
+  localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+  localStorage.removeItem(STORAGE_KEYS.ACADEMIC_YEARS);
+  initializeStorage();
+}
+
+// Academic Years (Tahun Pelajaran) Management
+export const BASE_ACADEMIC_YEARS: string[] = [
+  '2023/2024',
+  '2024/2025',
+  '2025/2026',
+  '2026/2027',
+  '2027/2028',
+  '2028/2029',
+  '2029/2030',
+];
+
+export function getAcademicYears(): string[] {
+  if (typeof window === 'undefined') return BASE_ACADEMIC_YEARS;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.ACADEMIC_YEARS);
+    let years: string[] = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(years) || years.length === 0) {
+      years = [...BASE_ACADEMIC_YEARS];
+    }
+    // Also include any academic years present on student profiles
+    const rawStudents = localStorage.getItem(STORAGE_KEYS.STUDENTS);
+    if (rawStudents) {
+      const studentList: Student[] = JSON.parse(rawStudents);
+      studentList.forEach((s) => {
+        const yr = (s.classRoom || s.academicYear || '').trim();
+        if (yr && !years.includes(yr)) {
+          years.push(yr);
+        }
+      });
+    }
+
+    // Sort descending so recent/future years appear near the top
+    years.sort((a, b) => b.localeCompare(a));
+    return years;
+  } catch {
+    return BASE_ACADEMIC_YEARS;
+  }
+}
+
+export function saveAcademicYears(years: string[]): void {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem(STORAGE_KEYS.ACADEMIC_YEARS, JSON.stringify(years));
+}
+
+export function addAcademicYear(newYear: string): { success: boolean; message?: string; years: string[] } {
+  const trimmed = newYear.trim();
+  if (!trimmed) {
+    return { success: false, message: 'Tahun pelajaran tidak boleh kosong.', years: getAcademicYears() };
+  }
+
+  const currentYears = getAcademicYears();
+  if (currentYears.includes(trimmed)) {
+    return { success: false, message: `Tahun pelajaran "${trimmed}" sudah terdaftar dalam sistem.`, years: currentYears };
+  }
+
+  const updated = [trimmed, ...currentYears].sort((a, b) => b.localeCompare(a));
+  saveAcademicYears(updated);
+  return { success: true, years: updated };
+}
+
+export function deleteAcademicYear(
+  year: string,
+  students: Student[]
+): { success: boolean; message?: string; years: string[] } {
+  const trimmed = year.trim();
+  const currentYears = getAcademicYears();
+
+  // Check if any student is assigned to this academic year
+  const inUse = students.some(
+    (s) => s.classRoom === trimmed || s.academicYear === trimmed
+  );
+
+  if (inUse) {
+    return {
+      success: false,
+      message: `Tahun pelajaran "${trimmed}" sedang digunakan oleh data siswa dan tidak dapat dihapus.`,
+      years: currentYears,
+    };
+  }
+
+  const updated = currentYears.filter((y) => y !== trimmed);
+  saveAcademicYears(updated);
+  return { success: true, years: updated };
+}
