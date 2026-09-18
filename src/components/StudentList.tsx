@@ -102,15 +102,28 @@ export const StudentList: React.FC<StudentListProps> = ({
         return false;
       }
 
-      // Search check
-      const query = searchTerm.toLowerCase();
-      const matchesSearch =
-        student.name.toLowerCase().includes(query) ||
-        student.nis.includes(query) ||
-        student.nisn.includes(query) ||
-        student.nik.includes(query) ||
-        (student.parentPhone && student.parentPhone.includes(query)) ||
-        student.parentName.toLowerCase().includes(query);
+      // Search check with tokenized precision
+      const rawQuery = searchTerm.trim().toLowerCase();
+      let matchesSearch = true;
+      if (rawQuery) {
+        const queryDigits = rawQuery.replace(/\D/g, '');
+        const tokens = rawQuery.split(/\s+/).filter(Boolean);
+        const nameLower = (student.name || '').toLowerCase();
+        const nis = (student.nis || '').trim();
+        const nisn = (student.nisn || '').trim();
+        const nik = (student.nik || '').trim();
+        const parentName = (student.parentName || '').toLowerCase();
+        const parentPhone = (student.parentPhone || '').trim();
+
+        const nameMatches = tokens.every((token) => nameLower.includes(token));
+        const nisMatches = nis.toLowerCase().includes(rawQuery) || (queryDigits && queryDigits.length >= 3 && nis.replace(/\D/g, '').includes(queryDigits));
+        const nisnMatches = nisn.toLowerCase().includes(rawQuery) || (queryDigits && queryDigits.length >= 3 && nisn.replace(/\D/g, '').includes(queryDigits));
+        const nikMatches = Boolean(nik && (nik.includes(rawQuery) || (queryDigits && queryDigits.length >= 4 && nik.replace(/\D/g, '').includes(queryDigits))));
+        const parentPhoneMatches = Boolean(parentPhone && queryDigits && queryDigits.length >= 4 && parentPhone.replace(/\D/g, '').includes(queryDigits));
+        const parentNameMatches = tokens.every((token) => parentName.includes(token));
+
+        matchesSearch = nameMatches || nisMatches || nisnMatches || nikMatches || parentPhoneMatches || parentNameMatches;
+      }
 
       // Academic Year check
       const matchesYear =
@@ -128,6 +141,16 @@ export const StudentList: React.FC<StudentListProps> = ({
         (statusFilter === 'Kosong' && stats.uploaded === 0);
 
       return matchesSearch && matchesYear && matchesStatus;
+    }).sort((a, b) => {
+      const q = searchTerm.trim().toLowerCase();
+      if (!q) return 0;
+      const aName = (a.name || '').toLowerCase();
+      const bName = (b.name || '').toLowerCase();
+      if (aName === q && bName !== q) return -1;
+      if (bName === q && aName !== q) return 1;
+      if (aName.startsWith(q) && !bName.startsWith(q)) return -1;
+      if (bName.startsWith(q) && !aName.startsWith(q)) return 1;
+      return 0;
     });
   }, [students, documents, searchTerm, selectedInstitution, selectedYear, statusFilter]);
 

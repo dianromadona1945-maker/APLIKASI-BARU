@@ -31,6 +31,8 @@ interface DashboardOverviewProps {
   onNavigate: (view: string) => void;
 }
 
+type SearchFieldMode = 'all' | 'name' | 'id' | 'nik' | 'parent';
+
 export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
   students,
   documents,
@@ -39,6 +41,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
   onNavigate,
 }) => {
   const [quickSearch, setQuickSearch] = useState('');
+  const [searchFieldMode, setSearchFieldMode] = useState<SearchFieldMode>('all');
   const [yearFilterInstitution, setYearFilterInstitution] = useState<'ALL' | InstitutionLevel>('ALL');
 
   // Key metrics calculation
@@ -84,19 +87,107 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     lainnya: documents.filter((d) => d.docType === 'lainnya').length,
   };
 
-  // Quick search results
-  const filteredStudents = quickSearch.trim()
-    ? students.filter(
-        (s) =>
-          s.name.toLowerCase().includes(quickSearch.toLowerCase()) ||
-          s.nis.includes(quickSearch) ||
-          s.nisn.includes(quickSearch) ||
-          s.nik.includes(quickSearch) ||
-          (s.parentPhone && s.parentPhone.includes(quickSearch)) ||
-          (s.institution && s.institution.toLowerCase().includes(quickSearch.toLowerCase())) ||
-          s.classRoom.toLowerCase().includes(quickSearch.toLowerCase())
-      )
-    : [];
+  // Precision Quick Search Results
+  // Strictly excludes generic institution ("SMK") and academicYear ("SMK - 2024/2025") from text query
+  // to avoid flooding results with all students in the school.
+  const { filteredStudents, exactMatchIds } = useMemo(() => {
+    const rawQuery = quickSearch.trim();
+    if (!rawQuery) {
+      return { filteredStudents: [], exactMatchIds: new Set<string>() };
+    }
+
+    const queryLower = rawQuery.toLowerCase();
+    const queryDigits = queryLower.replace(/\D/g, '');
+    const tokens = queryLower.split(/\s+/).filter(Boolean);
+
+    const matches = students.filter((s) => {
+      const nameLower = (s.name || '').toLowerCase();
+      const nis = (s.nis || '').trim();
+      const nisn = (s.nisn || '').trim();
+      const nik = (s.nik || '').trim();
+      const parentName = (s.parentName || '').toLowerCase();
+      const parentPhone = (s.parentPhone || '').trim();
+
+      if (searchFieldMode === 'name') {
+        return tokens.every((token) => nameLower.includes(token));
+      }
+
+      if (searchFieldMode === 'id') {
+        const nisMatches = nis.toLowerCase().includes(queryLower) || (queryDigits && nis.replace(/\D/g, '').includes(queryDigits));
+        const nisnMatches = nisn.toLowerCase().includes(queryLower) || (queryDigits && nisn.replace(/\D/g, '').includes(queryDigits));
+        return nisMatches || nisnMatches;
+      }
+
+      if (searchFieldMode === 'nik') {
+        return Boolean(nik && (nik.includes(rawQuery) || (queryDigits && nik.replace(/\D/g, '').includes(queryDigits))));
+      }
+
+      if (searchFieldMode === 'parent') {
+        return (
+          tokens.every((token) => parentName.includes(token)) ||
+          Boolean(parentPhone && parentPhone.includes(rawQuery))
+        );
+      }
+
+      // Default 'all': Search across specific student identifiers only
+      const nameMatches = tokens.every((token) => nameLower.includes(token));
+      const nisMatches = nis.toLowerCase().includes(queryLower) || (queryDigits && queryDigits.length >= 3 && nis.replace(/\D/g, '').includes(queryDigits));
+      const nisnMatches = nisn.toLowerCase().includes(queryLower) || (queryDigits && queryDigits.length >= 3 && nisn.replace(/\D/g, '').includes(queryDigits));
+      const nikMatches = Boolean(nik && (nik.includes(rawQuery) || (queryDigits && queryDigits.length >= 4 && nik.replace(/\D/g, '').includes(queryDigits))));
+      const parentPhoneMatches = Boolean(parentPhone && queryDigits && queryDigits.length >= 4 && parentPhone.replace(/\D/g, '').includes(queryDigits));
+      const parentNameMatches = tokens.every((token) => parentName.includes(token));
+
+      return nameMatches || nisMatches || nisnMatches || nikMatches || parentPhoneMatches || parentNameMatches;
+    });
+
+    const exactIds = new Set<string>();
+
+    // Score candidates for precise relevance ordering
+    const scored = matches.map((s) => {
+      const nameLower = (s.name || '').toLowerCase();
+      const nis = (s.nis || '').trim();
+      const nisn = (s.nisn || '').trim();
+      const nik = (s.nik || '').trim();
+
+      let score = 100;
+      let isExact = false;
+
+      // 1. Exact match on full name, NIS, NISN, or NIK
+      if (nameLower === queryLower || nis === rawQuery || nisn === rawQuery || (nik && nik === rawQuery)) {
+        score = 0;
+        isExact = true;
+        exactIds.add(s.id);
+      }
+      // 2. Name starts with full query
+      else if (nameLower.startsWith(queryLower)) {
+        score = 10;
+      }
+      // 3. NIS or NISN starts with query
+      else if (nis.startsWith(rawQuery) || nisn.startsWith(rawQuery)) {
+        score = 15;
+      }
+      // 4. Name contains the exact full phrase
+      else if (nameLower.includes(queryLower)) {
+        score = 25;
+      }
+      // 5. First token matches start of name
+      else if (tokens.length > 0 && nameLower.startsWith(tokens[0])) {
+        score = 40;
+      }
+
+      return { student: s, score, isExact };
+    });
+
+    scored.sort((a, b) => {
+      if (a.score !== b.score) return a.score - b.score;
+      return a.student.name.localeCompare(b.student.name);
+    });
+
+    return {
+      filteredStudents: scored.map((item) => item.student),
+      exactMatchIds: exactIds,
+    };
+  }, [students, quickSearch, searchFieldMode]);
 
   // Group by Academic Year
   const academicYears = getAcademicYears();
@@ -183,22 +274,73 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
             secara terstruktur dan terpisah antara jenjang <strong>SD</strong>, <strong>SMP</strong>, dan <strong>SMK</strong>.
           </p>
 
-          {/* Quick Search Bar */}
+          {/* Quick Search Bar with Precision Filter Modes */}
           <div className="mt-6 relative">
+            {/* Search Mode Chips */}
+            <div className="flex flex-wrap items-center gap-1.5 mb-2.5">
+              <span className="text-xs text-blue-200 font-semibold mr-1 flex items-center gap-1">
+                <span>Cari Berdasarkan:</span>
+              </span>
+              {(
+                [
+                  { id: 'all', label: 'Semua Kriteria' },
+                  { id: 'name', label: 'Nama Siswa' },
+                  { id: 'id', label: 'NIS / NISN' },
+                  { id: 'nik', label: 'NIK Siswa' },
+                  { id: 'parent', label: 'No. HP / Ortu' },
+                ] as const
+              ).map((mode) => (
+                <button
+                  key={mode.id}
+                  type="button"
+                  onClick={() => setSearchFieldMode(mode.id)}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                    searchFieldMode === mode.id
+                      ? 'bg-blue-500 text-white shadow-xs'
+                      : 'bg-slate-900/60 hover:bg-slate-900 text-slate-300 border border-white/10'
+                  }`}
+                >
+                  {mode.label}
+                </button>
+              ))}
+            </div>
+
             <div className="relative">
-              <Search className="absolute left-4 top-3.5 w-5 h-5 text-blue-300" />
+              <Search className="absolute left-4 top-3.5 w-5 h-5 text-blue-300 pointer-events-none" />
               <input
+                id="input-dashboard-search"
                 type="text"
                 value={quickSearch}
                 onChange={(e) => setQuickSearch(e.target.value)}
-                placeholder="Cari siswa: Ketik Nama, NIS, NISN, NIK, atau Jenjang (SD/SMP/SMK)..."
-                className="w-full pl-12 pr-28 py-3 rounded-xl bg-slate-950/70 backdrop-blur-md border border-white/30 text-white placeholder-slate-400 text-sm focus:outline-hidden focus:ring-2 focus:ring-blue-400 focus:border-blue-400 transition shadow-inner"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && filteredStudents.length > 0) {
+                    onOpenStudentDossier(filteredStudents[0]);
+                    setQuickSearch('');
+                  } else if (e.key === 'Escape') {
+                    setQuickSearch('');
+                  }
+                }}
+                autoComplete="off"
+                spellCheck={false}
+                placeholder={
+                  searchFieldMode === 'name'
+                    ? 'Ketik nama siswa (contoh: Ahla Mardhiatul Maula)...'
+                    : searchFieldMode === 'id'
+                    ? 'Ketik NIS atau NISN siswa...'
+                    : searchFieldMode === 'nik'
+                    ? 'Ketik NIK siswa...'
+                    : searchFieldMode === 'parent'
+                    ? 'Ketik nama orang tua atau no. telepon/WA...'
+                    : 'Cari 1 siswa: Ketik Nama Lengkap, NIS, NISN, atau NIK...'
+                }
+                className="w-full pl-12 pr-28 py-3 rounded-xl bg-slate-950/80 backdrop-blur-md border border-white/30 text-white placeholder-slate-400 text-sm focus:outline-hidden focus:ring-2 focus:ring-blue-400 focus:border-blue-400 transition shadow-inner"
               />
               {quickSearch && (
                 <button
                   type="button"
                   onClick={() => setQuickSearch('')}
                   className="absolute right-3.5 top-2.5 text-xs bg-white/20 hover:bg-white/30 text-white px-3 py-1 rounded-lg font-bold cursor-pointer transition flex items-center gap-1"
+                  title="Bersihkan kolom pencarian"
                 >
                   <X className="w-3.5 h-3.5" />
                   <span>Bersihkan</span>
@@ -206,89 +348,130 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
               )}
             </div>
 
-            {/* Live Search dropdown overlay - fully visible without clipping */}
+            {/* Live Search dropdown overlay */}
             {quickSearch.trim() !== '' && (
               <div className="absolute left-0 right-0 mt-2 bg-white rounded-2xl shadow-2xl border border-slate-300 text-slate-900 z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-150 ring-1 ring-black/10">
-                <div className="p-3 bg-slate-100 border-b border-slate-200 flex justify-between items-center text-xs font-bold text-slate-700">
+                <div className="p-3 bg-slate-100 border-b border-slate-200 flex flex-wrap justify-between items-center gap-2 text-xs font-bold text-slate-700">
                   <div className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-blue-600 animate-pulse"></span>
-                    <span>Hasil Pencarian: <b>{filteredStudents.length} siswa ditemukan</b></span>
+                    <span className="w-2.5 h-2.5 rounded-full bg-blue-600 animate-pulse"></span>
+                    <span>
+                      Hasil Pencarian: <b>{filteredStudents.length} siswa ditemukan</b>
+                    </span>
+                    {exactMatchIds.size > 0 && (
+                      <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[11px] font-extrabold border border-emerald-300">
+                        {exactMatchIds.size} Cocok Tepat
+                      </span>
+                    )}
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setQuickSearch('')}
-                    className="text-slate-500 hover:text-slate-800 text-[11px] font-semibold underline cursor-pointer"
-                  >
-                    Tutup Hasil
-                  </button>
+                  <div className="flex items-center gap-3">
+                    <span className="text-[11px] text-slate-500 hidden sm:inline">
+                      Tekan <kbd className="px-1.5 py-0.5 rounded bg-white border border-slate-300 font-mono text-[10px]">Enter ↵</kbd> untuk buka siswa teratas
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setQuickSearch('')}
+                      className="text-slate-600 hover:text-slate-900 text-xs font-bold px-2 py-0.5 rounded bg-slate-200 hover:bg-slate-300 transition cursor-pointer"
+                    >
+                      Tutup
+                    </button>
+                  </div>
                 </div>
-                <div className="max-h-80 overflow-y-auto divide-y divide-slate-100">
+
+                <div className="max-h-84 overflow-y-auto divide-y divide-slate-100">
                   {filteredStudents.length === 0 ? (
                     <div className="p-6 text-center space-y-2">
                       <p className="text-sm font-bold text-slate-700">
                         Tidak ditemukan siswa dengan kata kunci "{quickSearch}"
                       </p>
                       <p className="text-xs text-slate-500">
-                        Pastikan ejaan nama, NIS, NISN, atau NIK sudah sesuai.
+                        Pastikan ejaan nama, NIS, NISN, atau NIK sudah sesuai, atau ganti mode pencarian di atas.
                       </p>
                     </div>
                   ) : (
-                    filteredStudents.map((std) => {
-                      const stats = calculateCompleteness(std, documents);
-                      const stdInst = std.institution || parseInstitution(std.classRoom || std.academicYear, 'SMP');
-                      const instCfg = INSTITUTION_CONFIGS[stdInst];
-                      return (
-                        <div
-                          key={std.id}
-                          onClick={() => {
-                            onOpenStudentDossier(std);
-                            setQuickSearch('');
-                          }}
-                          className="p-3.5 hover:bg-blue-50/90 cursor-pointer flex items-center justify-between transition group"
-                        >
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-2">
-                              <span className={`px-2 py-0.5 rounded text-[10px] font-extrabold border ${instCfg.badgeClass}`}>
-                                {instCfg.code}
-                              </span>
-                              <span className="font-extrabold text-sm text-slate-900 group-hover:text-blue-700 transition">
-                                {std.name}
-                              </span>
-                              <span className="text-[10px] px-1.5 py-0.2 rounded font-bold bg-slate-100 text-slate-600">
-                                {std.gender === 'L' ? 'Laki-laki' : 'Perempuan'}
-                              </span>
+                    <>
+                      {filteredStudents.slice(0, 15).map((std, index) => {
+                        const stats = calculateCompleteness(std, documents);
+                        const stdInst = std.institution || parseInstitution(std.classRoom || std.academicYear, 'SMP');
+                        const instCfg = INSTITUTION_CONFIGS[stdInst];
+                        const isExact = exactMatchIds.has(std.id);
+
+                        return (
+                          <div
+                            key={std.id}
+                            onClick={() => {
+                              onOpenStudentDossier(std);
+                              setQuickSearch('');
+                            }}
+                            className={`p-3.5 cursor-pointer flex items-center justify-between transition group ${
+                              isExact
+                                ? 'bg-emerald-50/60 hover:bg-emerald-100/70 border-l-4 border-l-emerald-500'
+                                : index === 0 && filteredStudents.length === 1
+                                ? 'bg-blue-50/80 hover:bg-blue-100/80'
+                                : 'hover:bg-blue-50/60'
+                            }`}
+                          >
+                            <div className="space-y-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-extrabold border ${instCfg.badgeClass}`}>
+                                  {instCfg.code}
+                                </span>
+                                <span className="font-extrabold text-sm text-slate-900 group-hover:text-blue-700 transition">
+                                  {std.name}
+                                </span>
+                                {isExact && (
+                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-600 text-white shadow-2xs">
+                                    Cocok Tepat (100%)
+                                  </span>
+                                )}
+                                <span className="text-[10px] px-1.5 py-0.2 rounded font-bold bg-slate-100 text-slate-600">
+                                  {std.gender === 'L' ? 'Laki-laki' : 'Perempuan'}
+                                </span>
+                              </div>
+                              <div className="text-xs text-slate-600 flex flex-wrap items-center gap-2">
+                                <span className="font-mono font-bold text-blue-700">NIS: {std.nis}</span>
+                                <span className="text-slate-300">•</span>
+                                <span className="font-mono text-slate-600">NISN: {std.nisn}</span>
+                                {std.nik && (
+                                  <>
+                                    <span className="text-slate-300">•</span>
+                                    <span className="font-mono text-slate-500">NIK: {std.nik}</span>
+                                  </>
+                                )}
+                                <span className="text-slate-300">•</span>
+                                <span className="font-semibold text-slate-800">{std.classRoom}</span>
+                                {std.parentPhone && (
+                                  <>
+                                    <span className="text-slate-300">•</span>
+                                    <span className="text-slate-500">HP: {std.parentPhone}</span>
+                                  </>
+                                )}
+                              </div>
                             </div>
-                            <div className="text-xs text-slate-600 flex flex-wrap items-center gap-2">
-                              <span className="font-mono font-bold text-blue-700">NIS: {std.nis}</span>
-                              <span className="text-slate-300">•</span>
-                              <span className="font-mono text-slate-600">NISN: {std.nisn}</span>
-                              <span className="text-slate-300">•</span>
-                              <span className="font-semibold text-slate-800">{std.classRoom}</span>
-                              {std.parentPhone && (
-                                <>
-                                  <span className="text-slate-300">•</span>
-                                  <span className="text-slate-500">HP: {std.parentPhone}</span>
-                                </>
-                              )}
+                            <div className="flex items-center gap-3 shrink-0 ml-3">
+                              <span
+                                className={`text-xs px-2.5 py-1 rounded-full font-extrabold border ${
+                                  stats.isComplete
+                                    ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                                    : 'bg-amber-50 text-amber-800 border-amber-300'
+                                }`}
+                              >
+                                {stats.isComplete ? 'Berkas Lengkap' : `${stats.mandatoryUploaded}/3 Wajib`}
+                              </span>
+                              <div className="p-1.5 rounded-lg bg-blue-50 text-blue-600 group-hover:bg-blue-600 group-hover:text-white transition flex items-center gap-1 text-xs font-bold">
+                                <span className="hidden sm:inline">Buka Dokumen</span>
+                                <ArrowRight className="w-4 h-4" />
+                              </div>
                             </div>
                           </div>
-                          <div className="flex items-center gap-3 shrink-0 ml-3">
-                            <span
-                              className={`text-xs px-2.5 py-1 rounded-full font-extrabold border ${
-                                stats.isComplete
-                                  ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
-                                  : 'bg-amber-50 text-amber-800 border-amber-300'
-                              }`}
-                            >
-                              {stats.isComplete ? 'Berkas Lengkap' : `${stats.mandatoryUploaded}/3 Wajib`}
-                            </span>
-                            <div className="p-1.5 rounded-lg bg-blue-50 text-blue-600 group-hover:bg-blue-600 group-hover:text-white transition">
-                              <ArrowRight className="w-4 h-4" />
-                            </div>
-                          </div>
+                        );
+                      })}
+
+                      {filteredStudents.length > 15 && (
+                        <div className="p-3 bg-slate-50 text-center text-xs text-slate-500 border-t border-slate-200">
+                          Menampilkan 15 dari total <b>{filteredStudents.length}</b> hasil. Ketik nama lengkap atau nomor NIS agar langsung mengerucut ke 1 orang siswa.
                         </div>
-                      );
-                    })
+                      )}
+                    </>
                   )}
                 </div>
               </div>
