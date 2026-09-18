@@ -28,6 +28,7 @@ interface StudentListProps {
   documents: StudentDocument[];
   onOpenDossier: (student: Student) => void;
   onAddNewStudent: () => void;
+  onOpenImportExcel?: () => void;
   onEditStudent: (student: Student) => void;
   onDeleteStudent: (studentId: string, studentName: string) => void;
   currentUserRole: UserRole;
@@ -40,6 +41,7 @@ export const StudentList: React.FC<StudentListProps> = ({
   documents,
   onOpenDossier,
   onAddNewStudent,
+  onOpenImportExcel,
   onEditStudent,
   onDeleteStudent,
   currentUserRole,
@@ -256,6 +258,17 @@ export const StudentList: React.FC<StudentListProps> = ({
             <Calendar className="w-4 h-4 text-blue-600" />
             <span>Kelola Th. Pelajaran</span>
           </button>
+
+          {(currentUserRole === 'admin' || currentUserRole === 'petugas_tu') && onOpenImportExcel && (
+            <button
+              onClick={onOpenImportExcel}
+              title="Unggah dan impor banyak data siswa sekaligus dari file Excel (.xlsx / .xls / .csv)"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-2xs hover:shadow transition cursor-pointer"
+            >
+              <FileSpreadsheet className="w-4 h-4 text-emerald-100" />
+              <span>Impor Excel</span>
+            </button>
+          )}
 
           {(currentUserRole === 'admin' || currentUserRole === 'petugas_tu') && (
             <button

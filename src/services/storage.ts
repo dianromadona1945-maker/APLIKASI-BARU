@@ -413,6 +413,64 @@ export function saveStudent(studentData: Omit<Student, 'id' | 'createdAt' | 'upd
   return savedStudent;
 }
 
+export function saveStudentsBatch(
+  newStudents: Array<Omit<Student, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }>,
+  mode: 'skip_existing' | 'update_existing' = 'update_existing'
+): { addedCount: number; updatedCount: number; totalProcessed: number } {
+  const students = getStudents();
+  const now = new Date().toISOString();
+  let addedCount = 0;
+  let updatedCount = 0;
+
+  for (const item of newStudents) {
+    const institution: InstitutionLevel =
+      item.institution || parseInstitution(item.classRoom || item.academicYear, 'SMP');
+    const formattedYear = formatAcademicYear(
+      institution,
+      item.academicYear || item.classRoom || '2025/2026'
+    );
+
+    const cleanData = {
+      ...item,
+      institution,
+      classRoom: formattedYear,
+      academicYear: formattedYear,
+    };
+
+    // Check if student with same NIS, NISN, or id already exists
+    const existingIndex = students.findIndex((s) => {
+      if (item.id && s.id === item.id) return true;
+      if (item.nis && s.nis && s.nis.trim() === item.nis.trim()) return true;
+      if (item.nisn && s.nisn && s.nisn.trim() === item.nisn.trim()) return true;
+      return false;
+    });
+
+    if (existingIndex !== -1) {
+      if (mode === 'update_existing') {
+        students[existingIndex] = {
+          ...students[existingIndex],
+          ...cleanData,
+          updatedAt: now,
+        };
+        updatedCount++;
+      }
+      // If skip_existing, simply do not add duplicate
+    } else {
+      const newId = `std-${Date.now().toString().slice(-6)}-${Math.floor(Math.random() * 10000)}`;
+      students.unshift({
+        ...cleanData,
+        id: newId,
+        createdAt: now,
+        updatedAt: now,
+      });
+      addedCount++;
+    }
+  }
+
+  localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(students));
+  return { addedCount, updatedCount, totalProcessed: newStudents.length };
+}
+
 export function deleteStudent(studentId: string): void {
   const students = getStudents();
   const updated = students.filter((s) => s.id !== studentId);

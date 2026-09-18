@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, User, Hash, Calendar, MapPin, Phone, Building, Save, Plus, Check, School } from 'lucide-react';
+import { X, User, Hash, Calendar, MapPin, Phone, Building, Save, Plus, Check, School, FileSpreadsheet } from 'lucide-react';
 import { Student, InstitutionLevel } from '../types';
 import {
   getAcademicYears,
@@ -16,6 +16,7 @@ interface StudentFormModalProps {
   onClose: () => void;
   onSave: (studentData: Omit<Student, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }) => void;
   onYearsUpdated?: (years: string[]) => void;
+  onOpenImportExcel?: () => void;
 }
 
 export const StudentFormModal: React.FC<StudentFormModalProps> = ({
@@ -24,6 +25,7 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
   onClose,
   onSave,
   onYearsUpdated,
+  onOpenImportExcel,
 }) => {
   const [academicYears, setAcademicYears] = useState<string[]>([]);
   const [showInlineAddYear, setShowInlineAddYear] = useState(false);
@@ -195,6 +197,28 @@ export const StudentFormModal: React.FC<StudentFormModalProps> = ({
 
         {/* Form Body */}
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          {/* Quick Excel Import Banner */}
+          {!student && onOpenImportExcel && (
+            <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-2 text-emerald-950">
+                <FileSpreadsheet className="w-5 h-5 text-emerald-600 shrink-0" />
+                <span className="font-medium">
+                  Punya data dalam format Excel? Tambahkan puluhan siswa sekaligus tanpa input satu per satu.
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onOpenImportExcel();
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold shrink-0 shadow-2xs transition cursor-pointer"
+              >
+                <span>Buka Impor Excel</span>
+              </button>
+            </div>
+          )}
+
           {/* INSTITUTION SELECTOR (SD, SMP, SMK) */}
           <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
             <div className="flex items-center justify-between">

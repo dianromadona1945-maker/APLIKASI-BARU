@@ -17,6 +17,7 @@ import {
   Sparkles,
   Calendar,
   School,
+  X,
 } from 'lucide-react';
 import { Student, StudentDocument, DocumentType, InstitutionLevel } from '../types';
 import { DOCUMENT_CONFIGS, INSTITUTION_CONFIGS, INSTITUTION_LIST } from '../data/constants';
@@ -161,9 +162,12 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
   return (
     <div className="space-y-6">
       {/* Top Welcome & Quick Search Banner */}
-      <div className="bg-gradient-to-r from-slate-900 via-blue-950 to-indigo-950 rounded-2xl p-6 sm:p-8 text-white shadow-xl relative overflow-hidden">
-        <div className="absolute right-0 top-0 bottom-0 opacity-10 pointer-events-none flex items-center pr-10">
-          <GraduationCap className="w-80 h-80" />
+      <div className="bg-gradient-to-r from-slate-900 via-blue-950 to-indigo-950 rounded-2xl p-6 sm:p-8 text-white shadow-xl relative">
+        {/* Background decorative watermark with isolated clipping */}
+        <div className="absolute inset-0 rounded-2xl overflow-hidden pointer-events-none">
+          <div className="absolute right-0 top-0 bottom-0 opacity-10 flex items-center pr-10">
+            <GraduationCap className="w-80 h-80" />
+          </div>
         </div>
 
         <div className="relative z-10 max-w-3xl">
@@ -182,34 +186,51 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
           {/* Quick Search Bar */}
           <div className="mt-6 relative">
             <div className="relative">
-              <Search className="absolute left-4 top-3.5 w-5 h-5 text-slate-400" />
+              <Search className="absolute left-4 top-3.5 w-5 h-5 text-blue-300" />
               <input
                 type="text"
                 value={quickSearch}
                 onChange={(e) => setQuickSearch(e.target.value)}
-                placeholder="Pencarian cepat: Ketik Nama Siswa, NIS, NISN, NIK, atau Lembaga (SD/SMP/SMK)..."
-                className="w-full pl-12 pr-4 py-3 rounded-xl bg-white/10 backdrop-blur-md border border-white/20 text-white placeholder-slate-400 text-sm focus:outline-hidden focus:ring-2 focus:ring-blue-400 focus:bg-white/15 transition shadow-inner"
+                placeholder="Cari siswa: Ketik Nama, NIS, NISN, NIK, atau Jenjang (SD/SMP/SMK)..."
+                className="w-full pl-12 pr-28 py-3 rounded-xl bg-slate-950/70 backdrop-blur-md border border-white/30 text-white placeholder-slate-400 text-sm focus:outline-hidden focus:ring-2 focus:ring-blue-400 focus:border-blue-400 transition shadow-inner"
               />
               {quickSearch && (
                 <button
+                  type="button"
                   onClick={() => setQuickSearch('')}
-                  className="absolute right-3.5 top-3 text-xs bg-white/20 hover:bg-white/30 text-white px-2 py-1 rounded cursor-pointer"
+                  className="absolute right-3.5 top-2.5 text-xs bg-white/20 hover:bg-white/30 text-white px-3 py-1 rounded-lg font-bold cursor-pointer transition flex items-center gap-1"
                 >
-                  Bersihkan
+                  <X className="w-3.5 h-3.5" />
+                  <span>Bersihkan</span>
                 </button>
               )}
             </div>
 
-            {/* Live Search dropdown overlay */}
+            {/* Live Search dropdown overlay - fully visible without clipping */}
             {quickSearch.trim() !== '' && (
-              <div className="absolute left-0 right-0 mt-2 bg-white rounded-xl shadow-2xl border border-slate-200 text-slate-900 z-50 overflow-hidden">
-                <div className="p-3 bg-slate-50 border-b border-slate-200 flex justify-between items-center text-xs font-bold text-slate-600">
-                  <span>Hasil Pencarian ({filteredStudents.length} siswa ditemukan)</span>
+              <div className="absolute left-0 right-0 mt-2 bg-white rounded-2xl shadow-2xl border border-slate-300 text-slate-900 z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-150 ring-1 ring-black/10">
+                <div className="p-3 bg-slate-100 border-b border-slate-200 flex justify-between items-center text-xs font-bold text-slate-700">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-blue-600 animate-pulse"></span>
+                    <span>Hasil Pencarian: <b>{filteredStudents.length} siswa ditemukan</b></span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setQuickSearch('')}
+                    className="text-slate-500 hover:text-slate-800 text-[11px] font-semibold underline cursor-pointer"
+                  >
+                    Tutup Hasil
+                  </button>
                 </div>
-                <div className="max-h-64 overflow-y-auto divide-y divide-slate-100">
+                <div className="max-h-80 overflow-y-auto divide-y divide-slate-100">
                   {filteredStudents.length === 0 ? (
-                    <div className="p-4 text-center text-sm text-slate-500">
-                      Tidak ditemukan siswa dengan kata kunci "{quickSearch}"
+                    <div className="p-6 text-center space-y-2">
+                      <p className="text-sm font-bold text-slate-700">
+                        Tidak ditemukan siswa dengan kata kunci "{quickSearch}"
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        Pastikan ejaan nama, NIS, NISN, atau NIK sudah sesuai.
+                      </p>
                     </div>
                   ) : (
                     filteredStudents.map((std) => {
@@ -223,34 +244,47 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                             onOpenStudentDossier(std);
                             setQuickSearch('');
                           }}
-                          className="p-3.5 hover:bg-blue-50/80 cursor-pointer flex items-center justify-between transition"
+                          className="p-3.5 hover:bg-blue-50/90 cursor-pointer flex items-center justify-between transition group"
                         >
-                          <div>
+                          <div className="space-y-1">
                             <div className="flex items-center gap-2">
-                              <span className={`px-1.5 py-0.2 rounded text-[10px] font-extrabold border ${instCfg.badgeClass}`}>
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-extrabold border ${instCfg.badgeClass}`}>
                                 {instCfg.code}
                               </span>
-                              <span className="font-bold text-sm text-slate-900">{std.name}</span>
+                              <span className="font-extrabold text-sm text-slate-900 group-hover:text-blue-700 transition">
+                                {std.name}
+                              </span>
+                              <span className="text-[10px] px-1.5 py-0.2 rounded font-bold bg-slate-100 text-slate-600">
+                                {std.gender === 'L' ? 'Laki-laki' : 'Perempuan'}
+                              </span>
                             </div>
-                            <div className="text-xs text-slate-500 flex items-center gap-2 mt-1">
-                              <span className="font-mono font-medium text-slate-700">NISN: {std.nisn}</span>
-                              <span>•</span>
-                              <span className="font-semibold text-blue-700">{std.classRoom}</span>
-                              <span>•</span>
-                              <span className="font-mono text-slate-500">NIK: {std.nik}</span>
+                            <div className="text-xs text-slate-600 flex flex-wrap items-center gap-2">
+                              <span className="font-mono font-bold text-blue-700">NIS: {std.nis}</span>
+                              <span className="text-slate-300">•</span>
+                              <span className="font-mono text-slate-600">NISN: {std.nisn}</span>
+                              <span className="text-slate-300">•</span>
+                              <span className="font-semibold text-slate-800">{std.classRoom}</span>
+                              {std.parentPhone && (
+                                <>
+                                  <span className="text-slate-300">•</span>
+                                  <span className="text-slate-500">HP: {std.parentPhone}</span>
+                                </>
+                              )}
                             </div>
                           </div>
-                          <div className="flex items-center gap-3">
+                          <div className="flex items-center gap-3 shrink-0 ml-3">
                             <span
-                              className={`text-xs px-2.5 py-1 rounded-full font-bold ${
+                              className={`text-xs px-2.5 py-1 rounded-full font-extrabold border ${
                                 stats.isComplete
-                                  ? 'bg-emerald-100 text-emerald-800'
-                                  : 'bg-amber-100 text-amber-800'
+                                  ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                                  : 'bg-amber-50 text-amber-800 border-amber-300'
                               }`}
                             >
-                              {stats.isComplete ? 'Lengkap (100%)' : `${stats.mandatoryUploaded}/3 Wajib`}
+                              {stats.isComplete ? 'Berkas Lengkap' : `${stats.mandatoryUploaded}/3 Wajib`}
                             </span>
-                            <ArrowRight className="w-4 h-4 text-slate-400" />
+                            <div className="p-1.5 rounded-lg bg-blue-50 text-blue-600 group-hover:bg-blue-600 group-hover:text-white transition">
+                              <ArrowRight className="w-4 h-4" />
+                            </div>
                           </div>
                         </div>
                       );

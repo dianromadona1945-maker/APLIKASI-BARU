@@ -18,6 +18,7 @@ import {
   logoutUser,
   loginAsRole,
   getAcademicYears,
+  saveStudentsBatch,
 } from './services/storage';
 import { Student, StudentDocument, User, VerificationStatus, AuditLog } from './types';
 import { Navbar } from './components/Navbar';
@@ -33,6 +34,7 @@ import { UserManagementView } from './components/UserManagementView';
 import { BackupSecurityView } from './components/BackupSecurityView';
 import { UserSwitcherModal } from './components/UserSwitcherModal';
 import { EditUserModal } from './components/EditUserModal';
+import { ImportExcelModal } from './components/ImportExcelModal';
 import { LoginView } from './components/LoginView';
 import { CheckCircle2, AlertCircle } from 'lucide-react';
 
@@ -73,6 +75,9 @@ export default function App() {
   // Manage Academic Years Modal
   const [academicYears, setAcademicYears] = useState<string[]>(() => getAcademicYears());
   const [isManageYearsOpen, setIsManageYearsOpen] = useState(false);
+
+  // Bulk Import Excel Modal
+  const [isImportExcelOpen, setIsImportExcelOpen] = useState(false);
 
   // Toast feedback
   const [toastMessage, setToastMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -153,6 +158,22 @@ export default function App() {
       }
       showToast('Siswa dan dokumen berhasil dihapus.', 'error');
     }
+  };
+
+  const handleBatchImportStudents = (
+    importedList: Array<Omit<Student, 'id' | 'createdAt' | 'updatedAt'>>,
+    mode: 'skip_existing' | 'update_existing'
+  ) => {
+    const result = saveStudentsBatch(importedList, mode);
+    addAuditLog(
+      'CREATE_STUDENT',
+      `Impor massal dari file Excel: berhasil memproses ${result.totalProcessed} siswa (${result.addedCount} siswa baru, ${result.updatedCount} diperbarui).`
+    );
+    refreshAllData();
+    showToast(
+      `Berhasil mengimpor ${result.totalProcessed} data siswa (${result.addedCount} baru, ${result.updatedCount} diperbarui).`,
+      'success'
+    );
   };
 
   // Document Actions
@@ -320,6 +341,7 @@ export default function App() {
                   documents={documents}
                   onOpenDossier={(std) => setSelectedStudentForDossier(std)}
                   onAddNewStudent={() => setStudentFormModal({ isOpen: true, student: null })}
+                  onOpenImportExcel={() => setIsImportExcelOpen(true)}
                   onEditStudent={(std) => setStudentFormModal({ isOpen: true, student: std })}
                   onDeleteStudent={handleDeleteStudent}
                   currentUserRole={currentUser.role}
@@ -393,6 +415,16 @@ export default function App() {
             student={studentFormModal.student}
             onClose={() => setStudentFormModal({ isOpen: false, student: null })}
             onSave={handleSaveStudent}
+            onYearsUpdated={(updated) => setAcademicYears(updated)}
+            onOpenImportExcel={() => setIsImportExcelOpen(true)}
+          />
+
+          {/* Bulk Import Excel Modal */}
+          <ImportExcelModal
+            isOpen={isImportExcelOpen}
+            onClose={() => setIsImportExcelOpen(false)}
+            onImportSuccess={handleBatchImportStudents}
+            existingStudents={students}
           />
 
           {/* User Switcher Modal */}
