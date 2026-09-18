@@ -93,36 +93,17 @@ export const StudentList: React.FC<StudentListProps> = ({
 
   // Filter students
   const filteredStudents = useMemo(() => {
-    return students.filter((student) => {
+    const rawQuery = searchTerm.trim().toLowerCase();
+    const queryDigits = rawQuery.replace(/\D/g, '');
+    const tokens = rawQuery.split(/\s+/).filter(Boolean);
+
+    const matches = students.filter((student) => {
       const studentInst: InstitutionLevel =
         student.institution || parseInstitution(student.classRoom || student.academicYear, 'SMP');
 
       // Institution check
       if (selectedInstitution !== 'ALL' && studentInst !== selectedInstitution) {
         return false;
-      }
-
-      // Search check with tokenized precision
-      const rawQuery = searchTerm.trim().toLowerCase();
-      let matchesSearch = true;
-      if (rawQuery) {
-        const queryDigits = rawQuery.replace(/\D/g, '');
-        const tokens = rawQuery.split(/\s+/).filter(Boolean);
-        const nameLower = (student.name || '').toLowerCase();
-        const nis = (student.nis || '').trim();
-        const nisn = (student.nisn || '').trim();
-        const nik = (student.nik || '').trim();
-        const parentName = (student.parentName || '').toLowerCase();
-        const parentPhone = (student.parentPhone || '').trim();
-
-        const nameMatches = tokens.every((token) => nameLower.includes(token));
-        const nisMatches = nis.toLowerCase().includes(rawQuery) || (queryDigits && queryDigits.length >= 3 && nis.replace(/\D/g, '').includes(queryDigits));
-        const nisnMatches = nisn.toLowerCase().includes(rawQuery) || (queryDigits && queryDigits.length >= 3 && nisn.replace(/\D/g, '').includes(queryDigits));
-        const nikMatches = Boolean(nik && (nik.includes(rawQuery) || (queryDigits && queryDigits.length >= 4 && nik.replace(/\D/g, '').includes(queryDigits))));
-        const parentPhoneMatches = Boolean(parentPhone && queryDigits && queryDigits.length >= 4 && parentPhone.replace(/\D/g, '').includes(queryDigits));
-        const parentNameMatches = tokens.every((token) => parentName.includes(token));
-
-        matchesSearch = nameMatches || nisMatches || nisnMatches || nikMatches || parentPhoneMatches || parentNameMatches;
       }
 
       // Academic Year check
@@ -132,6 +113,8 @@ export const StudentList: React.FC<StudentListProps> = ({
         student.academicYear === selectedYear ||
         extractYearCycle(student.classRoom) === selectedYear;
 
+      if (!matchesYear) return false;
+
       // Completeness status check
       const stats = calculateCompleteness(student, documents);
       const matchesStatus =
@@ -140,9 +123,53 @@ export const StudentList: React.FC<StudentListProps> = ({
         (statusFilter === 'Belum Lengkap' && !stats.isComplete && stats.uploaded > 0) ||
         (statusFilter === 'Kosong' && stats.uploaded === 0);
 
-      return matchesSearch && matchesYear && matchesStatus;
-    }).sort((a, b) => {
-      const q = searchTerm.trim().toLowerCase();
+      if (!matchesStatus) return false;
+
+      // Search check with high precision
+      if (rawQuery) {
+        const nameLower = (student.name || '').toLowerCase();
+        const nis = (student.nis || '').trim();
+        const nisn = (student.nisn || '').trim();
+        const nik = (student.nik || '').trim();
+        const parentName = (student.parentName || '').toLowerCase();
+        const parentPhone = (student.parentPhone || '').trim();
+
+        const nameMatches = Boolean(nameLower && tokens.length > 0 && tokens.every((token) => nameLower.includes(token)));
+        const nisMatches = Boolean(
+          nis && (nis.toLowerCase().includes(rawQuery) || (queryDigits.length >= 3 && nis.replace(/\D/g, '').includes(queryDigits)))
+        );
+        const nisnMatches = Boolean(
+          nisn && (nisn.toLowerCase().includes(rawQuery) || (queryDigits.length >= 3 && nisn.replace(/\D/g, '').includes(queryDigits)))
+        );
+        const nikMatches = Boolean(
+          nik && (nik.includes(rawQuery) || (queryDigits.length >= 4 && nik.replace(/\D/g, '').includes(queryDigits)))
+        );
+        const parentPhoneMatches = Boolean(
+          parentPhone && queryDigits.length >= 4 && parentPhone.replace(/\D/g, '').includes(queryDigits)
+        );
+        const parentNameMatches = Boolean(
+          parentName && tokens.length > 0 && tokens.every((token) => parentName.includes(token))
+        );
+
+        return nameMatches || nisMatches || nisnMatches || nikMatches || parentPhoneMatches || parentNameMatches;
+      }
+
+      return true;
+    });
+
+    // Deduplicate to guarantee no identical duplicate entries appear in the table
+    const seen = new Set<string>();
+    const deduplicated: Student[] = [];
+    for (const student of matches) {
+      const dedupeKey = student.id || `${(student.nis || '').trim()}_${(student.name || '').trim().toLowerCase()}`;
+      if (!seen.has(dedupeKey)) {
+        seen.add(dedupeKey);
+        deduplicated.push(student);
+      }
+    }
+
+    return deduplicated.sort((a, b) => {
+      const q = rawQuery;
       if (!q) return 0;
       const aName = (a.name || '').toLowerCase();
       const bName = (b.name || '').toLowerCase();
@@ -441,7 +468,10 @@ export const StudentList: React.FC<StudentListProps> = ({
                 <th className="py-3.5 px-4 text-right">Aksi</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody
+              key={`tbody-${selectedInstitution}-${searchTerm.trim()}-${selectedYear}-${statusFilter}`}
+              className="divide-y divide-slate-100"
+            >
               {filteredStudents.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="py-12 text-center text-slate-400">
@@ -455,7 +485,7 @@ export const StudentList: React.FC<StudentListProps> = ({
                   </td>
                 </tr>
               ) : (
-                filteredStudents.map((student) => {
+                filteredStudents.map((student, index) => {
                   const studentDocs = documents.filter((d) => d.studentId === student.id);
                   const stats = calculateCompleteness(student, documents);
                   const studentInst: InstitutionLevel =
@@ -464,7 +494,7 @@ export const StudentList: React.FC<StudentListProps> = ({
 
                   return (
                     <tr
-                      key={student.id}
+                      key={`${student.id}_${student.nis || ''}_${index}`}
                       className="hover:bg-blue-50/40 transition group cursor-pointer"
                       onClick={() => onOpenDossier(student)}
                     >

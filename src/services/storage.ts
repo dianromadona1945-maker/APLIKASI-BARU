@@ -323,7 +323,19 @@ export function getStudents(): Student[] {
   try {
     const list: any[] = JSON.parse(raw);
     let modified = false;
+
+    // First pass: migrate institution and academic year format
     const migrated: Student[] = list.map((s, index) => {
+      // Clean Excel leading apostrophes if any
+      const cleanNis = String(s.nis || '').replace(/^['\s]+|['\s]+$/g, '').trim();
+      const cleanNisn = String(s.nisn || '').replace(/^['\s]+|['\s]+$/g, '').trim();
+      const cleanNik = String(s.nik || '').replace(/^['\s]+|['\s]+$/g, '').trim();
+      const cleanPhone = String(s.parentPhone || '').replace(/^['\s]+|['\s]+$/g, '').trim();
+
+      if (cleanNis !== s.nis || cleanNisn !== s.nisn || cleanNik !== s.nik || cleanPhone !== s.parentPhone) {
+        modified = true;
+      }
+
       // Determine institution: SD, SMP, or SMK
       let inst: InstitutionLevel = s.institution;
       if (!inst || (inst !== 'SD' && inst !== 'SMP' && inst !== 'SMK')) {
@@ -339,20 +351,74 @@ export function getStudents(): Student[] {
 
       if (s.institution !== inst || s.academicYear !== formattedYear || s.classRoom !== formattedYear) {
         modified = true;
-        return {
-          ...s,
-          institution: inst,
-          classRoom: formattedYear,
-          academicYear: formattedYear,
-        };
       }
-      return s as Student;
+
+      return {
+        ...s,
+        nis: cleanNis,
+        nisn: cleanNisn,
+        nik: cleanNik,
+        parentPhone: cleanPhone,
+        institution: inst,
+        classRoom: formattedYear,
+        academicYear: formattedYear,
+      } as Student;
     });
 
-    if (modified) {
-      localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(migrated));
+    // Second pass: remove duplicate students & guarantee 100% unique IDs
+    const seenNis = new Set<string>();
+    const seenNisn = new Set<string>();
+    const seenNik = new Set<string>();
+    const seenNameBirth = new Set<string>();
+    const seenIds = new Set<string>();
+    const deduplicated: Student[] = [];
+
+    for (let i = 0; i < migrated.length; i++) {
+      const s = migrated[i];
+      const nisKey = s.nis ? s.nis.toLowerCase().trim() : '';
+      const nisnKey = s.nisn ? s.nisn.toLowerCase().trim() : '';
+      const nikKey = s.nik ? s.nik.trim() : '';
+      const nameBirthKey = `${(s.name || '').trim().toLowerCase()}_${(s.birthDate || '').trim().toLowerCase()}`;
+
+      let isDuplicate = false;
+      if (nisKey && nisKey !== '-' && nisKey !== '0' && seenNis.has(nisKey)) {
+        isDuplicate = true;
+      } else if (nisnKey && nisnKey !== '-' && nisnKey !== '0' && seenNisn.has(nisnKey)) {
+        isDuplicate = true;
+      } else if (nikKey && nikKey.length >= 10 && seenNik.has(nikKey)) {
+        isDuplicate = true;
+      } else if (s.name && s.name.trim().length > 3 && seenNameBirth.has(nameBirthKey) && (s.classRoom === deduplicated.find(d => `${(d.name || '').trim().toLowerCase()}_${(d.birthDate || '').trim().toLowerCase()}` === nameBirthKey)?.classRoom)) {
+        isDuplicate = true;
+      }
+
+      if (isDuplicate) {
+        modified = true;
+        continue;
+      }
+
+      if (nisKey && nisKey !== '-' && nisKey !== '0') seenNis.add(nisKey);
+      if (nisnKey && nisnKey !== '-' && nisnKey !== '0') seenNisn.add(nisnKey);
+      if (nikKey && nikKey.length >= 10) seenNik.add(nikKey);
+      if (s.name && s.name.trim().length > 3) seenNameBirth.add(nameBirthKey);
+
+      // Ensure guaranteed unique ID
+      let finalId = s.id;
+      if (!finalId || seenIds.has(finalId)) {
+        finalId = `std-${Date.now()}-${Math.random().toString(36).slice(2, 9)}-${i}`;
+        modified = true;
+      }
+      seenIds.add(finalId);
+
+      deduplicated.push({
+        ...s,
+        id: finalId,
+      });
     }
-    return migrated;
+
+    if (modified || deduplicated.length !== list.length) {
+      localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(deduplicated));
+    }
+    return deduplicated;
   } catch {
     return [];
   }
@@ -372,6 +438,10 @@ export function saveStudent(studentData: Omit<Student, 'id' | 'createdAt' | 'upd
 
   const cleanData = {
     ...studentData,
+    nis: String(studentData.nis || '').replace(/^['\s]+|['\s]+$/g, '').trim(),
+    nisn: String(studentData.nisn || '').replace(/^['\s]+|['\s]+$/g, '').trim(),
+    nik: String(studentData.nik || '').replace(/^['\s]+|['\s]+$/g, '').trim(),
+    parentPhone: String(studentData.parentPhone || '').replace(/^['\s]+|['\s]+$/g, '').trim(),
     institution,
     classRoom: formattedYear,
     academicYear: formattedYear,
@@ -398,8 +468,8 @@ export function saveStudent(studentData: Omit<Student, 'id' | 'createdAt' | 'upd
       students.unshift(savedStudent);
     }
   } else {
-    // Create
-    const newId = `std-${Date.now().toString().slice(-6)}`;
+    // Create with guaranteed unique ID
+    const newId = `std-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     savedStudent = {
       ...cleanData,
       id: newId,
@@ -422,7 +492,8 @@ export function saveStudentsBatch(
   let addedCount = 0;
   let updatedCount = 0;
 
-  for (const item of newStudents) {
+  for (let idx = 0; idx < newStudents.length; idx++) {
+    const item = newStudents[idx];
     const institution: InstitutionLevel =
       item.institution || parseInstitution(item.classRoom || item.academicYear, 'SMP');
     const formattedYear = formatAcademicYear(
@@ -430,18 +501,28 @@ export function saveStudentsBatch(
       item.academicYear || item.classRoom || '2025/2026'
     );
 
+    const cleanNis = String(item.nis || '').replace(/^['\s]+|['\s]+$/g, '').trim();
+    const cleanNisn = String(item.nisn || '').replace(/^['\s]+|['\s]+$/g, '').trim();
+    const cleanNik = String(item.nik || '').replace(/^['\s]+|['\s]+$/g, '').trim();
+    const cleanPhone = String(item.parentPhone || '').replace(/^['\s]+|['\s]+$/g, '').trim();
+
     const cleanData = {
       ...item,
+      nis: cleanNis,
+      nisn: cleanNisn,
+      nik: cleanNik,
+      parentPhone: cleanPhone,
       institution,
       classRoom: formattedYear,
       academicYear: formattedYear,
     };
 
-    // Check if student with same NIS, NISN, or id already exists
+    // Check if student with same NIS, NISN, NIK, or id already exists
     const existingIndex = students.findIndex((s) => {
       if (item.id && s.id === item.id) return true;
-      if (item.nis && s.nis && s.nis.trim() === item.nis.trim()) return true;
-      if (item.nisn && s.nisn && s.nisn.trim() === item.nisn.trim()) return true;
+      if (cleanNis && cleanNis !== '-' && cleanNis !== '0' && s.nis && s.nis.trim() === cleanNis) return true;
+      if (cleanNisn && cleanNisn !== '-' && cleanNisn !== '0' && s.nisn && s.nisn.trim() === cleanNisn) return true;
+      if (cleanNik && cleanNik.length >= 10 && s.nik && s.nik.trim() === cleanNik) return true;
       return false;
     });
 
@@ -456,7 +537,7 @@ export function saveStudentsBatch(
       }
       // If skip_existing, simply do not add duplicate
     } else {
-      const newId = `std-${Date.now().toString().slice(-6)}-${Math.floor(Math.random() * 10000)}`;
+      const newId = `std-${Date.now()}-${Math.random().toString(36).slice(2, 9)}-${idx}`;
       students.unshift({
         ...cleanData,
         id: newId,
