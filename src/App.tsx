@@ -21,7 +21,7 @@ import {
   saveStudentsBatch,
   applyRemoteSyncedData,
 } from './services/storage';
-import { getSyncConfig, pullAllDataFromHosting, pushAllDataToHosting } from './services/mysqlSync';
+import { getSyncConfig, pullAllDataFromHosting, pushAllDataToHosting, deleteStudentFromHosting } from './services/mysqlSync';
 import { Student, StudentDocument, User, VerificationStatus, AuditLog } from './types';
 import { Navbar } from './components/Navbar';
 import { Sidebar } from './components/Sidebar';
@@ -194,11 +194,15 @@ export default function App() {
       deleteStudent(studentId);
       addAuditLog('DELETE_STUDENT', `Menghapus data siswa dan seluruh arsip berkas: ${studentName}`, studentId, studentName);
       refreshAllData();
+      
+      // Hapus langsung dari hosting cloud agar tidak muncul kembali saat sinkronisasi
+      deleteStudentFromHosting(studentId).catch((err) => console.warn('Failed to delete from cloud hosting:', err));
       syncToCloudIfEnabled();
+
       if (selectedStudentForDossier?.id === studentId) {
         setSelectedStudentForDossier(null);
       }
-      showToast('Siswa dan dokumen berhasil dihapus.', 'error');
+      showToast('Siswa dan dokumen berhasil dihapus dari sistem & cloud hosting.', 'error');
     }
   };
 

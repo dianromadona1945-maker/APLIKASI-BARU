@@ -5,6 +5,7 @@ import {
   Database,
   CheckCircle2,
   AlertCircle,
+  AlertTriangle,
   RefreshCw,
   UploadCloud,
   DownloadCloud,
@@ -405,6 +406,23 @@ export const RumahwebSyncModal: React.FC<RumahwebSyncModalProps> = ({
                   </p>
                 </div>
               </div>
+
+              {/* Discrepancy notice if local count differs from cloud server count */}
+              {config.serverCounts?.students !== undefined && config.serverCounts.students !== students.length && (
+                <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 flex items-start gap-3">
+                  <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                  <div className="text-xs space-y-1">
+                    <p className="font-bold text-amber-900">
+                      Perbedaan Jumlah Siswa ({students.length} di Komputer Ini vs {config.serverCounts.students} di Cloud Server)
+                    </p>
+                    <p className="text-amber-800 leading-relaxed">
+                      {students.length < config.serverCounts.students
+                        ? `Ada ${config.serverCounts.students - students.length} siswa yang sudah Anda hapus di komputer ini tetapi masih tersimpan di cloud. Klik "Kirim ke Hosting (Push)" di bawah untuk menyelaraskan cloud dan menghapus siswa tersebut dari server juga. Jangan klik "Tarik Data (Pull)" karena akan memunculkan kembali siswa yang sudah dihapus!`
+                        : `Ada ${students.length - config.serverCounts.students} siswa baru di komputer ini yang belum ada di cloud. Klik "Kirim ke Hosting (Push)" untuk mengunggahnya.`}
+                    </p>
+                  </div>
+                </div>
+              )}
 
               {/* Action Buttons */}
               <div className="space-y-3">

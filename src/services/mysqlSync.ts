@@ -108,11 +108,47 @@ export async function testRumahwebConnection(
   }
 }
 
+export async function deleteStudentFromHosting(studentId: string): Promise<{ success: boolean; message: string }> {
+  const config = getSyncConfig();
+  if (!config.apiUrl) {
+    return { success: false, message: 'URL API belum dikonfigurasi' };
+  }
+  try {
+    const url = new URL(config.apiUrl);
+    url.searchParams.set('action', 'delete_student');
+    const response = await fetch(url.toString(), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Sync-Key': config.syncKey.trim(),
+      },
+      body: JSON.stringify({
+        key: config.syncKey.trim(),
+        studentId,
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const result = await response.json();
+    return {
+      success: !!result.success,
+      message: result.message || 'Siswa berhasil dihapus dari server cloud',
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      message: `Gagal menghapus siswa dari server cloud: ${err.message || String(err)}`,
+    };
+  }
+}
+
 export async function pushAllDataToHosting(payload: {
   students: Student[];
   documents: StudentDocument[];
   academicYears: string[];
   logs?: AuditLog[];
+  mirror?: boolean;
 }): Promise<{ success: boolean; message: string }> {
   const config = getSyncConfig();
   if (!config.apiUrl) {
@@ -137,6 +173,7 @@ export async function pushAllDataToHosting(payload: {
         documents: payload.documents,
         academicYears: payload.academicYears,
         logs: payload.logs || [],
+        mirror: payload.mirror !== false,
       }),
     });
 
@@ -366,6 +403,10 @@ switch ($action) {
         handlePullAll($pdo);
         break;
 
+    case 'delete_student':
+        handleDeleteStudent($pdo, $body);
+        break;
+
     default:
         echo json_encode([
             'success' => false,
@@ -464,10 +505,25 @@ function handlePushAll($pdo, $body) {
     $documents = isset($body['documents']) && is_array($body['documents']) ? $body['documents'] : [];
     $academicYears = isset($body['academicYears']) && is_array($body['academicYears']) ? $body['academicYears'] : [];
     $logs = isset($body['logs']) && is_array($body['logs']) ? $body['logs'] : [];
+    $mirror = isset($body['mirror']) ? (bool)$body['mirror'] : true;
 
     $pdo->beginTransaction();
 
     try {
+        // Jika mode mirror aktif dan ada data siswa yang dikirim:
+        // Hapus siswa di cloud yang sudah dihapus di PC lokal
+        if ($mirror && !empty($students)) {
+            $validIds = array_column($students, 'id');
+            if (!empty($validIds)) {
+                $placeholders = implode(',', array_fill(0, count($validIds), '?'));
+                $delStmt = $pdo->prepare("DELETE FROM \`arsip_students\` WHERE \`id\` NOT IN ($placeholders)");
+                $delStmt->execute($validIds);
+
+                // Hapus dokumen milik siswa yang sudah dihapus
+                $pdo->exec("DELETE FROM \`arsip_documents\` WHERE \`student_id\` NOT IN (SELECT \`id\` FROM \`arsip_students\`)");
+            }
+        }
+
         // Upsert Siswa
         $stmtStudent = $pdo->prepare("INSERT INTO \`arsip_students\` (
             \`id\`, \`name\`, \`nis\`, \`nisn\`, \`nik\`, \`institution\`, \`academic_year\`, \`class_room\`,
@@ -651,6 +707,27 @@ function handlePullAll($pdo) {
             'academicYears' => !empty($years) ? $years : [],
         ]
     ]);
+}
+
+function handleDeleteStudent($pdo, $body) {
+    $studentId = $body['studentId'] ?? '';
+    if (!empty($studentId)) {
+        $stmt = $pdo->prepare("DELETE FROM \`arsip_students\` WHERE \`id\` = :id");
+        $stmt->execute([':id' => $studentId]);
+
+        $stmtDoc = $pdo->prepare("DELETE FROM \`arsip_documents\` WHERE \`student_id\` = :id");
+        $stmtDoc->execute([':id' => $studentId]);
+
+        echo json_encode([
+            'success' => true,
+            'message' => 'Siswa dan dokumen berhasil dihapus dari cloud MySQL.'
+        ]);
+    } else {
+        echo json_encode([
+            'success' => false,
+            'error' => 'ID Siswa tidak valid.'
+        ]);
+    }
 }
 ?>`;
 }
