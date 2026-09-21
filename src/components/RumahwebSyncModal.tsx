@@ -63,8 +63,8 @@ export const RumahwebSyncModal: React.FC<RumahwebSyncModalProps> = ({
 
   // Script Generator form
   const [dbHost, setDbHost] = useState<string>('localhost');
-  const [dbName, setDbName] = useState<string>('u1234567_arsip');
-  const [dbUser, setDbUser] = useState<string>('u1234567_user');
+  const [dbName, setDbName] = useState<string>('arsd2325_arsip');
+  const [dbUser, setDbUser] = useState<string>('arsd2325_admin');
   const [dbPass, setDbPass] = useState<string>('');
   const [scriptSyncKey, setScriptSyncKey] = useState<string>(config.syncKey || 'ArsipAttafaqquh2026');
 

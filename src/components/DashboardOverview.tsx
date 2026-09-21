@@ -564,7 +564,12 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
             </div>
           </div>
           <div className="mt-4">
-            <div className="text-2xl font-extrabold text-emerald-600">{fullyCompleteStudents} Siswa (100%)</div>
+            <div className="text-2xl font-extrabold text-emerald-600">
+              {fullyCompleteStudents} Siswa
+              <span className="text-sm font-semibold text-slate-500 ml-1.5">
+                ({totalStudents > 0 ? Math.round((fullyCompleteStudents / totalStudents) * 100) : 0}%)
+              </span>
+            </div>
             <div className="mt-1 text-xs text-slate-500 flex items-center gap-1.5">
               <span>{totalStudents - fullyCompleteStudents} siswa belum melengkapi berkas</span>
             </div>

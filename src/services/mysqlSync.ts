@@ -20,13 +20,17 @@ export function getSyncConfig(): RumahwebSyncConfig {
   try {
     const raw = localStorage.getItem(SYNC_CONFIG_KEY);
     if (raw) {
-      return JSON.parse(raw);
+      const parsed = JSON.parse(raw);
+      if (!parsed.apiUrl) {
+        parsed.apiUrl = 'https://arsipatf.my.id/api.php';
+      }
+      return parsed;
     }
   } catch (e) {
     console.error('Failed to load Rumahweb sync config:', e);
   }
   return {
-    apiUrl: '',
+    apiUrl: 'https://arsipatf.my.id/api.php',
     syncKey: 'ArsipAttafaqquh2026',
     autoSync: true,
     lastSyncStatus: 'idle',
