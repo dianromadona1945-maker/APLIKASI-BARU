@@ -19,7 +19,9 @@ import {
   loginAsRole,
   getAcademicYears,
   saveStudentsBatch,
+  applyRemoteSyncedData,
 } from './services/storage';
+import { getSyncConfig, pullAllDataFromHosting, pushAllDataToHosting } from './services/mysqlSync';
 import { Student, StudentDocument, User, VerificationStatus, AuditLog } from './types';
 import { Navbar } from './components/Navbar';
 import { Sidebar } from './components/Sidebar';
@@ -35,6 +37,7 @@ import { BackupSecurityView } from './components/BackupSecurityView';
 import { UserSwitcherModal } from './components/UserSwitcherModal';
 import { EditUserModal } from './components/EditUserModal';
 import { ImportExcelModal } from './components/ImportExcelModal';
+import { RumahwebSyncModal } from './components/RumahwebSyncModal';
 import { LoginView } from './components/LoginView';
 import { CheckCircle2, AlertCircle } from 'lucide-react';
 
@@ -54,6 +57,9 @@ export default function App() {
   const [currentView, setCurrentView] = useState<string>('dashboard');
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState<boolean>(false);
   const [selectedStudentForDossier, setSelectedStudentForDossier] = useState<Student | null>(null);
+
+  // Rumahweb Cloud Sync Modal
+  const [isRumahwebSyncOpen, setIsRumahwebSyncOpen] = useState<boolean>(false);
 
   // Preview Modal
   const [previewDoc, setPreviewDoc] = useState<StudentDocument | null>(null);
@@ -98,6 +104,40 @@ export default function App() {
     setAcademicYears(getAcademicYears());
   };
 
+  // Background sync helper
+  const syncToCloudIfEnabled = () => {
+    const config = getSyncConfig();
+    if (config.apiUrl && config.autoSync) {
+      pushAllDataToHosting({
+        students: getStudents(),
+        documents: getDocuments(),
+        academicYears: getAcademicYears(),
+        logs: getLogs(),
+      }).catch((e) => console.warn('Auto cloud sync failed:', e));
+    }
+  };
+
+  // Auto-sync on startup if Rumahweb MySQL API is configured
+  useEffect(() => {
+    const config = getSyncConfig();
+    if (config.apiUrl && config.autoSync) {
+      pullAllDataFromHosting()
+        .then((res) => {
+          if (res.success && res.data && res.data.students.length > 0) {
+            applyRemoteSyncedData(res.data);
+            refreshAllData();
+            showToast(
+              `Cloud MySQL Rumahweb: Data ${res.data.students.length} siswa berhasil disinkronkan ke PC ini.`,
+              'success'
+            );
+          }
+        })
+        .catch((e) => {
+          console.warn('Initial cloud sync skipped:', e);
+        });
+    }
+  }, []);
+
   // Authentication Handlers
   const handleLoginSuccess = (user: User) => {
     setCurrentUserState(user);
@@ -141,6 +181,7 @@ export default function App() {
     );
 
     refreshAllData();
+    syncToCloudIfEnabled();
     showToast(isEditing ? 'Data siswa berhasil diperbarui.' : 'Siswa baru berhasil ditambahkan.');
   };
 
@@ -153,6 +194,7 @@ export default function App() {
       deleteStudent(studentId);
       addAuditLog('DELETE_STUDENT', `Menghapus data siswa dan seluruh arsip berkas: ${studentName}`, studentId, studentName);
       refreshAllData();
+      syncToCloudIfEnabled();
       if (selectedStudentForDossier?.id === studentId) {
         setSelectedStudentForDossier(null);
       }
@@ -170,6 +212,7 @@ export default function App() {
       `Impor massal dari file Excel: berhasil memproses ${result.totalProcessed} siswa (${result.addedCount} siswa baru, ${result.updatedCount} diperbarui).`
     );
     refreshAllData();
+    syncToCloudIfEnabled();
     showToast(
       `Berhasil mengimpor ${result.totalProcessed} data siswa (${result.addedCount} baru, ${result.updatedCount} diperbarui).`,
       'success'
@@ -197,6 +240,7 @@ export default function App() {
     );
 
     refreshAllData();
+    syncToCloudIfEnabled();
     showToast(`Dokumen "${docData.title}" berhasil diarsipkan.`);
   };
 
@@ -209,6 +253,7 @@ export default function App() {
       addAuditLog('DELETE_DOC', `Menghapus berkas dokumen: ${docTitle}`, doc?.studentId, student?.name);
 
       refreshAllData();
+      syncToCloudIfEnabled();
       showToast('Dokumen berhasil dihapus dari arsip.', 'error');
     }
   };
@@ -228,6 +273,7 @@ export default function App() {
       );
 
       refreshAllData();
+      syncToCloudIfEnabled();
       showToast(`Status dokumen diubah menjadi: ${statusLabel}`);
     }
   };
@@ -302,6 +348,7 @@ export default function App() {
             onLogoutClick={handleLogout}
             onLoginAsAdminClick={currentUser.role !== 'admin' ? handleLoginAsAdminDirectly : undefined}
             onManageAcademicYears={() => setIsManageYearsOpen(true)}
+            onOpenRumahwebSync={() => setIsRumahwebSyncOpen(true)}
             isOpen={isMobileSidebarOpen}
             onClose={() => setIsMobileSidebarOpen(false)}
             studentsCount={students.length}
@@ -317,6 +364,7 @@ export default function App() {
               onLogoutClick={handleLogout}
               onEditProfileClick={() => setIsEditProfileOpen(true)}
               onLoginAsAdminClick={currentUser.role !== 'admin' ? handleLoginAsAdminDirectly : undefined}
+              onOpenRumahwebSync={() => setIsRumahwebSyncOpen(true)}
               onToggleSidebar={() => setIsMobileSidebarOpen((prev) => !prev)}
               currentView={currentView}
               students={students}
@@ -365,6 +413,7 @@ export default function App() {
                   students={students}
                   documents={documents}
                   onDataRefreshed={refreshAllData}
+                  onOpenRumahwebSync={() => setIsRumahwebSyncOpen(true)}
                 />
               )}
             </main>
@@ -452,6 +501,18 @@ export default function App() {
             user={currentUser}
             onClose={() => setIsEditProfileOpen(false)}
             onSave={handleSaveUser}
+          />
+
+          {/* Rumahweb Cloud MySQL Sync Modal */}
+          <RumahwebSyncModal
+            isOpen={isRumahwebSyncOpen}
+            onClose={() => setIsRumahwebSyncOpen(false)}
+            students={students}
+            documents={documents}
+            academicYears={academicYears}
+            logs={logs}
+            onDataSynced={refreshAllData}
+            onToast={showToast}
           />
         </div>
       )}

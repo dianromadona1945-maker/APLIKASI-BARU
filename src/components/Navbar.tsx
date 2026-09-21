@@ -12,8 +12,12 @@ import {
   History,
   Database,
   KeyRound,
+  Cloud,
+  Server,
+  RefreshCw,
 } from 'lucide-react';
 import { User, StudentDocument, Student } from '../types';
+import { getSyncConfig } from '../services/mysqlSync';
 
 interface NavbarProps {
   currentUser: User;
@@ -21,6 +25,7 @@ interface NavbarProps {
   onLogoutClick: () => void;
   onEditProfileClick?: () => void;
   onLoginAsAdminClick?: () => void;
+  onOpenRumahwebSync?: () => void;
   onToggleSidebar: () => void;
   currentView: string;
   students: Student[];
@@ -33,12 +38,15 @@ export const Navbar: React.FC<NavbarProps> = ({
   onLogoutClick,
   onEditProfileClick,
   onLoginAsAdminClick,
+  onOpenRumahwebSync,
   onToggleSidebar,
   currentView,
   students,
   documents,
 }) => {
   const isAdmin = currentUser.role === 'admin';
+  const syncConfig = getSyncConfig();
+  const isCloudConnected = syncConfig.lastSyncStatus === 'success' && Boolean(syncConfig.apiUrl);
 
   const viewTitles: Record<string, { title: string; subtitle: string; icon: React.ComponentType<{ className?: string }> }> = {
     dashboard: {
@@ -126,6 +134,36 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <div className="text-xs font-extrabold text-blue-600">{documents.length} Dokumen</div>
               </div>
             </div>
+
+            {/* Cloud MySQL Rumahweb Sync Quick Button */}
+            {onOpenRumahwebSync && (
+              <button
+                type="button"
+                onClick={onOpenRumahwebSync}
+                title={
+                  isCloudConnected
+                    ? 'Sinkronisasi Rumahweb MySQL Aktif - Klik untuk buka panel'
+                    : 'Sambungkan ke Database MySQL Hosting Rumahweb'
+                }
+                className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-xl border transition shadow-2xs cursor-pointer ${
+                  isCloudConnected
+                    ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-300'
+                    : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border-indigo-200'
+                }`}
+              >
+                <div className="relative">
+                  <Cloud className="w-3.5 h-3.5" />
+                  <span
+                    className={`absolute -top-1 -right-1 w-2 h-2 rounded-full ${
+                      isCloudConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-400'
+                    }`}
+                  />
+                </div>
+                <span className="hidden md:inline">
+                  {isCloudConnected ? 'Rumahweb MySQL' : 'Sinkron Cloud'}
+                </span>
+              </button>
+            )}
 
             {/* User chip */}
             <div

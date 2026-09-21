@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import {
   Database,
   Download,
@@ -11,6 +11,10 @@ import {
   Lock,
   HardDrive,
   FileCode,
+  Server,
+  Cloud,
+  CheckCircle2,
+  ExternalLink,
 } from 'lucide-react';
 import { Student, StudentDocument } from '../types';
 import {
@@ -19,20 +23,30 @@ import {
   resetToFactoryDefault,
 } from '../services/storage';
 import { downloadJsonFile, downloadAllStudentsZip } from '../utils/zipExport';
+import { getSyncConfig, RumahwebSyncConfig } from '../services/mysqlSync';
 
 interface BackupSecurityViewProps {
   students: Student[];
   documents: StudentDocument[];
   onDataRefreshed: () => void;
+  onOpenRumahwebSync?: () => void;
 }
 
 export const BackupSecurityView: React.FC<BackupSecurityViewProps> = ({
   students,
   documents,
   onDataRefreshed,
+  onOpenRumahwebSync,
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [restoreStatus, setRestoreStatus] = useState<{ success?: boolean; message?: string } | null>(null);
+  const [syncConfig, setSyncConfig] = useState<RumahwebSyncConfig>(() => getSyncConfig());
+
+  useEffect(() => {
+    setSyncConfig(getSyncConfig());
+  }, []);
+
+  const isCloudConnected = syncConfig.lastSyncStatus === 'success' && Boolean(syncConfig.apiUrl);
 
   const handleExportJson = () => {
     const jsonStr = exportDatabaseBackup();
@@ -104,6 +118,47 @@ export const BackupSecurityView: React.FC<BackupSecurityViewProps> = ({
           </button>
         </div>
       )}
+
+      {/* Featured Banner: Sinkronisasi Cloud MySQL Rumahweb */}
+      <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-950 rounded-3xl p-6 text-white shadow-xl border border-slate-700/60 relative overflow-hidden">
+        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-5">
+          <div className="space-y-2 max-w-xl">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-[11px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-400/30">
+              <Server className="w-3.5 h-3.5" />
+              <span>Database Cloud MySQL Hosting Rumahweb</span>
+            </div>
+            <h3 className="text-lg font-extrabold text-white">
+              Sinkronisasi Otomatis Antar-Komputer (Real-Time)
+            </h3>
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Hubungkan sistem arsip ini dengan database MySQL di cPanel Rumahweb Anda agar data {students.length} siswa
+              dan seluruh berkas otomatis tersinkronisasi di setiap komputer/laptop sekolah tanpa perlu kirim file cadangan manual.
+            </p>
+            <div className="flex items-center gap-2 text-xs pt-1">
+              <span
+                className={`w-2.5 h-2.5 rounded-full ${
+                  isCloudConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
+                }`}
+              />
+              <span className="text-slate-200 font-medium">
+                {isCloudConnected
+                  ? `Terhubung ke MySQL Rumahweb (${syncConfig.serverCounts?.students ?? students.length} Siswa di Cloud)`
+                  : 'Belum Terhubung — Silakan masukkan URL API Rumahweb atau unduh script PHP'}
+              </span>
+            </div>
+          </div>
+
+          <div className="shrink-0 flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
+            <button
+              onClick={onOpenRumahwebSync}
+              className="inline-flex items-center justify-center gap-2 px-5 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl text-xs font-bold shadow-lg transition"
+            >
+              <Cloud className="w-4 h-4" />
+              <span>Buka Panel Sinkronisasi Rumahweb</span>
+            </button>
+          </div>
+        </div>
+      </div>
 
       {/* Backup Action Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-5">

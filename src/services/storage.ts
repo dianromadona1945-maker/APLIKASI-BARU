@@ -885,6 +885,26 @@ export function restoreDatabaseBackup(jsonString: string): { success: boolean; m
   }
 }
 
+export function applyRemoteSyncedData(data: {
+  students: Student[];
+  documents?: StudentDocument[];
+  academicYears?: string[];
+  logs?: AuditLog[];
+}): void {
+  if (data.students && Array.isArray(data.students)) {
+    localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(data.students));
+  }
+  if (data.documents && Array.isArray(data.documents)) {
+    localStorage.setItem(STORAGE_KEYS.DOCUMENTS, JSON.stringify(data.documents));
+  }
+  if (data.academicYears && Array.isArray(data.academicYears)) {
+    localStorage.setItem(STORAGE_KEYS.ACADEMIC_YEARS, JSON.stringify(data.academicYears));
+  }
+  if (data.logs && Array.isArray(data.logs)) {
+    localStorage.setItem(STORAGE_KEYS.LOGS, JSON.stringify(data.logs));
+  }
+}
+
 export function resetToFactoryDefault(): void {
   localStorage.removeItem(STORAGE_KEYS.INITIALIZED);
   localStorage.removeItem(STORAGE_KEYS.STUDENTS);

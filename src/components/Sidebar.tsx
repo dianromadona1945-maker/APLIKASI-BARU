@@ -14,8 +14,11 @@ import {
   Shield,
   FileText,
   Calendar,
+  Cloud,
+  Server,
 } from 'lucide-react';
 import { User, UserRole, Student, StudentDocument } from '../types';
+import { getSyncConfig } from '../services/mysqlSync';
 
 interface SidebarProps {
   currentView: string;
@@ -25,6 +28,7 @@ interface SidebarProps {
   onLogoutClick: () => void;
   onLoginAsAdminClick?: () => void;
   onManageAcademicYears?: () => void;
+  onOpenRumahwebSync?: () => void;
   isOpen: boolean;
   onClose: () => void;
   studentsCount: number;
@@ -39,11 +43,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onLogoutClick,
   onLoginAsAdminClick,
   onManageAcademicYears,
+  onOpenRumahwebSync,
   isOpen,
   onClose,
   studentsCount,
   documentsCount,
 }) => {
+  const syncConfig = getSyncConfig();
+  const isCloudConnected = syncConfig.lastSyncStatus === 'success' && Boolean(syncConfig.apiUrl);
   const mainNavigation = [
     {
       id: 'dashboard',
@@ -86,6 +93,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: ShieldCheck,
       badge: 'Admin',
       allowedRoles: ['admin'] as UserRole[],
+    },
+    {
+      id: 'rumahweb-sync',
+      label: 'Sinkronisasi Rumahweb',
+      description: 'MySQL Cloud antar-PC',
+      icon: Cloud,
+      badge: isCloudConnected ? 'MySQL Aktif' : 'Atur Cloud',
+      allowedRoles: ['admin', 'petugas_tu'] as UserRole[],
+      onClick: onOpenRumahwebSync,
     },
     {
       id: 'backup',
