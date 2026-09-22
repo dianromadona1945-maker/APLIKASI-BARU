@@ -26,6 +26,8 @@ interface NavbarProps {
   onEditProfileClick?: () => void;
   onLoginAsAdminClick?: () => void;
   onOpenRumahwebSync?: () => void;
+  onForceSync?: () => void;
+  isSyncing?: boolean;
   onToggleSidebar: () => void;
   currentView: string;
   students: Student[];
@@ -39,6 +41,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   onEditProfileClick,
   onLoginAsAdminClick,
   onOpenRumahwebSync,
+  onForceSync,
+  isSyncing = false,
   onToggleSidebar,
   currentView,
   students,
@@ -135,34 +139,48 @@ export const Navbar: React.FC<NavbarProps> = ({
               </div>
             </div>
 
-            {/* Cloud MySQL Rumahweb Sync Quick Button */}
+            {/* Cloud MySQL Rumahweb Sync Quick Button & Live Status */}
             {onOpenRumahwebSync && (
-              <button
-                type="button"
-                onClick={onOpenRumahwebSync}
-                title={
-                  isCloudConnected
-                    ? 'Sinkronisasi Rumahweb MySQL Aktif - Klik untuk buka panel'
-                    : 'Sambungkan ke Database MySQL Hosting Rumahweb'
-                }
-                className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-xl border transition shadow-2xs cursor-pointer ${
-                  isCloudConnected
-                    ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-300'
-                    : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border-indigo-200'
-                }`}
-              >
-                <div className="relative">
-                  <Cloud className="w-3.5 h-3.5" />
-                  <span
-                    className={`absolute -top-1 -right-1 w-2 h-2 rounded-full ${
-                      isCloudConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-400'
-                    }`}
-                  />
-                </div>
-                <span className="hidden md:inline">
-                  {isCloudConnected ? 'Rumahweb MySQL' : 'Sinkron Cloud'}
-                </span>
-              </button>
+              <div className="flex items-center bg-slate-50 border border-slate-200 rounded-xl p-0.5 shadow-2xs">
+                <button
+                  type="button"
+                  onClick={onOpenRumahwebSync}
+                  title={
+                    isCloudConnected
+                      ? 'Sinkronisasi Otomatis Antar-Laptop Aktif - Klik untuk buka pengaturan'
+                      : 'Sambungkan ke Database MySQL Hosting Rumahweb'
+                  }
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-bold rounded-lg transition cursor-pointer ${
+                    isCloudConnected
+                      ? 'text-emerald-800 hover:bg-emerald-50'
+                      : 'text-indigo-800 hover:bg-indigo-50'
+                  }`}
+                >
+                  <div className="relative">
+                    <Cloud className={`w-3.5 h-3.5 ${isCloudConnected ? 'text-emerald-600' : 'text-slate-500'}`} />
+                    <span
+                      className={`absolute -top-1 -right-1 w-2 h-2 rounded-full ${
+                        isCloudConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-400'
+                      }`}
+                    />
+                  </div>
+                  <span className="hidden sm:inline">
+                    {isCloudConnected ? 'Live Sync' : 'Sinkron Cloud'}
+                  </span>
+                </button>
+
+                {onForceSync && (
+                  <button
+                    type="button"
+                    onClick={onForceSync}
+                    disabled={isSyncing}
+                    title={isSyncing ? 'Sedang memeriksa & menyelaraskan data...' : 'Tarik data terbaru dari cloud sekarang (Sinkron Manual)'}
+                    className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition cursor-pointer disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin text-blue-600' : ''}`} />
+                  </button>
+                )}
+              </div>
             )}
 
             {/* User chip */}

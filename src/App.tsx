@@ -21,7 +21,16 @@ import {
   saveStudentsBatch,
   applyRemoteSyncedData,
 } from './services/storage';
-import { getSyncConfig, pullAllDataFromHosting, pushAllDataToHosting, deleteStudentFromHosting } from './services/mysqlSync';
+import {
+  getSyncConfig,
+  pullAllDataFromHosting,
+  pushAllDataToHosting,
+  deleteStudentFromHosting,
+  checkServerSyncStatus,
+  getIsSyncInProgress,
+  getLastKnownSyncTimestamp,
+  saveLastKnownSyncTimestamp,
+} from './services/mysqlSync';
 import { Student, StudentDocument, User, VerificationStatus, AuditLog } from './types';
 import { Navbar } from './components/Navbar';
 import { Sidebar } from './components/Sidebar';
@@ -104,6 +113,9 @@ export default function App() {
     setAcademicYears(getAcademicYears());
   };
 
+  // Live Auto-Sync Status
+  const [isLiveSyncing, setIsLiveSyncing] = useState(false);
+
   // Background sync helper
   const syncToCloudIfEnabled = () => {
     const config = getSyncConfig();
@@ -117,25 +129,127 @@ export default function App() {
     }
   };
 
-  // Auto-sync on startup if Rumahweb MySQL API is configured
-  useEffect(() => {
-    const config = getSyncConfig();
-    if (config.apiUrl && config.autoSync) {
-      pullAllDataFromHosting()
-        .then((res) => {
-          if (res.success && res.data && res.data.students.length > 0) {
-            applyRemoteSyncedData(res.data);
-            refreshAllData();
-            showToast(
-              `Cloud MySQL Rumahweb: Data ${res.data.students.length} siswa berhasil disinkronkan ke PC ini.`,
-              'success'
-            );
-          }
-        })
-        .catch((e) => {
-          console.warn('Initial cloud sync skipped:', e);
-        });
+  // Manual Trigger to force pull from cloud anytime
+  const handleManualSync = async () => {
+    if (getIsSyncInProgress() || isLiveSyncing) return;
+    setIsLiveSyncing(true);
+    try {
+      const res = await pullAllDataFromHosting();
+      if (res.success && res.data) {
+        applyRemoteSyncedData(res.data);
+        refreshAllData();
+        showToast(`Berhasil menyelaraskan ${res.data.students.length} siswa dari Cloud MySQL.`, 'success');
+      } else {
+        showToast(res.message || 'Gagal sinkronisasi data.', 'error');
+      }
+    } catch (err: any) {
+      showToast(`Gagal sinkronisasi: ${err.message || String(err)}`, 'error');
+    } finally {
+      setIsLiveSyncing(false);
     }
+  };
+
+  // Live Auto-Sync Engine across all Laptops
+  useEffect(() => {
+    let timer: NodeJS.Timeout | null = null;
+    let isCancelled = false;
+    let isChecking = false;
+
+    const performSyncCheck = async (isBackground = true) => {
+      const config = getSyncConfig();
+      if (!config.apiUrl || !config.autoSync || getIsSyncInProgress() || isChecking) {
+        return;
+      }
+
+      isChecking = true;
+      if (!isBackground) setIsLiveSyncing(true);
+
+      try {
+        const check = await checkServerSyncStatus();
+        if (isCancelled) return;
+
+        // If check failed or server has no counts, check if we need initial pull
+        const currentStudents = getStudents();
+        const currentDocs = getDocuments();
+        const lastKnownUpdate = getLastKnownSyncTimestamp();
+
+        let shouldPull = false;
+
+        if (check.success && check.counts) {
+          const countDiffers =
+            check.counts.students !== currentStudents.length ||
+            check.counts.documents !== currentDocs.length;
+
+          const timestampDiffers =
+            Boolean(check.lastStudentUpdate) &&
+            check.lastStudentUpdate !== lastKnownUpdate;
+
+          const isFreshLocalSeed =
+            currentStudents.length <= 6 && check.counts.students > 6;
+
+          shouldPull = countDiffers || timestampDiffers || isFreshLocalSeed;
+        } else if (!isBackground) {
+          // On explicit startup, if check wasn't supported yet, attempt initial pull
+          shouldPull = true;
+        }
+
+        if (shouldPull) {
+          setIsLiveSyncing(true);
+          const res = await pullAllDataFromHosting();
+          if (isCancelled) return;
+
+          if (res.success && res.data) {
+            applyRemoteSyncedData(res.data);
+            if (check.lastStudentUpdate) {
+              saveLastKnownSyncTimestamp(check.lastStudentUpdate);
+            }
+            refreshAllData();
+
+            if (!isBackground) {
+              showToast(
+                `Cloud MySQL: Terhubung & otomatis memuat ${res.data.students.length} siswa ke PC ini.`,
+                'success'
+              );
+            } else {
+              showToast(
+                `Data otomatis tersinkronisasi dari Cloud (${res.data.students.length} siswa).`,
+                'success'
+              );
+            }
+          }
+        }
+      } catch (err) {
+        // Silently skip background network fluctuations
+      } finally {
+        isChecking = false;
+        setIsLiveSyncing(false);
+      }
+    };
+
+    // 1. Initial check immediately on application startup
+    performSyncCheck(false);
+
+    // 2. Continuous background polling every 6 seconds
+    timer = setInterval(() => {
+      performSyncCheck(true);
+    }, 6000);
+
+    // 3. Immediately sync whenever user switches to this browser tab or window
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === 'visible') {
+        performSyncCheck(true);
+      }
+    };
+
+    window.addEventListener('focus', handleVisibilityOrFocus);
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+
+    return () => {
+      isCancelled = true;
+      if (timer) clearInterval(timer);
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+    };
   }, []);
 
   // Authentication Handlers
@@ -369,6 +483,8 @@ export default function App() {
               onEditProfileClick={() => setIsEditProfileOpen(true)}
               onLoginAsAdminClick={currentUser.role !== 'admin' ? handleLoginAsAdminDirectly : undefined}
               onOpenRumahwebSync={() => setIsRumahwebSyncOpen(true)}
+              onForceSync={handleManualSync}
+              isSyncing={isLiveSyncing}
               onToggleSidebar={() => setIsMobileSidebarOpen((prev) => !prev)}
               currentView={currentView}
               students={students}
@@ -468,7 +584,10 @@ export default function App() {
             student={studentFormModal.student}
             onClose={() => setStudentFormModal({ isOpen: false, student: null })}
             onSave={handleSaveStudent}
-            onYearsUpdated={(updated) => setAcademicYears(updated)}
+            onYearsUpdated={(updated) => {
+              setAcademicYears(updated);
+              syncToCloudIfEnabled();
+            }}
             onOpenImportExcel={() => setIsImportExcelOpen(true)}
           />
 
@@ -496,7 +615,10 @@ export default function App() {
             onClose={() => setIsManageYearsOpen(false)}
             academicYears={academicYears}
             students={students}
-            onYearsUpdated={(updated) => setAcademicYears(updated)}
+            onYearsUpdated={(updated) => {
+              setAcademicYears(updated);
+              syncToCloudIfEnabled();
+            }}
           />
 
           {/* Edit Current User Profile & Password Modal */}

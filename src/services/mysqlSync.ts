@@ -15,14 +15,41 @@ export interface RumahwebSyncConfig {
 }
 
 const SYNC_CONFIG_KEY = 'arsip_rumahweb_sync_config_v1';
+const LAST_KNOWN_UPDATE_KEY = 'arsip_rumahweb_last_known_update_v1';
+
+let isSyncInProgress = false;
+
+export function getIsSyncInProgress(): boolean {
+  return isSyncInProgress;
+}
+
+export function getLastKnownSyncTimestamp(): string {
+  try {
+    return localStorage.getItem(LAST_KNOWN_UPDATE_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
+export function saveLastKnownSyncTimestamp(ts: string): void {
+  try {
+    localStorage.setItem(LAST_KNOWN_UPDATE_KEY, ts);
+  } catch {}
+}
 
 export function getSyncConfig(): RumahwebSyncConfig {
   try {
     const raw = localStorage.getItem(SYNC_CONFIG_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (!parsed.apiUrl) {
+      if (!parsed.apiUrl || typeof parsed.apiUrl !== 'string' || !parsed.apiUrl.trim()) {
         parsed.apiUrl = 'https://arsipatf.my.id/api.php';
+      }
+      if (!parsed.syncKey || typeof parsed.syncKey !== 'string' || !parsed.syncKey.trim()) {
+        parsed.syncKey = 'ArsipAttafaqquh2026';
+      }
+      if (parsed.autoSync === undefined) {
+        parsed.autoSync = true;
       }
       return parsed;
     }
@@ -45,6 +72,68 @@ export function saveSyncConfig(config: Partial<RumahwebSyncConfig>): RumahwebSyn
   };
   localStorage.setItem(SYNC_CONFIG_KEY, JSON.stringify(updated));
   return updated;
+}
+
+/**
+ * Lightweight check to detect if server data has changed without pulling entire database
+ */
+export async function checkServerSyncStatus(): Promise<{
+  success: boolean;
+  counts?: { students: number; documents: number; academicYears: number };
+  lastStudentUpdate?: string;
+  lastDocUpdate?: string;
+  error?: string;
+}> {
+  const config = getSyncConfig();
+  if (!config.apiUrl || !config.apiUrl.startsWith('http')) {
+    return { success: false, error: 'API URL belum dikonfigurasi' };
+  }
+
+  try {
+    const url = new URL(config.apiUrl);
+    // Coba action check_sync terlebih dahulu
+    url.searchParams.set('action', 'check_sync');
+
+    let response = await fetch(url.toString(), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Sync-Key': config.syncKey.trim(),
+      },
+      body: JSON.stringify({ key: config.syncKey.trim() }),
+    });
+
+    // Jika server script belum diperbarui (404/unknown action), fallback ke 'test'
+    if (!response.ok) {
+      const fallbackUrl = new URL(config.apiUrl);
+      fallbackUrl.searchParams.set('action', 'test');
+      response = await fetch(fallbackUrl.toString(), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Sync-Key': config.syncKey.trim(),
+        },
+        body: JSON.stringify({ key: config.syncKey.trim() }),
+      });
+    }
+
+    if (!response.ok) {
+      return { success: false, error: `HTTP ${response.status}` };
+    }
+
+    const data = await response.json();
+    if (data.success) {
+      return {
+        success: true,
+        counts: data.counts,
+        lastStudentUpdate: data.lastStudentUpdate || '',
+        lastDocUpdate: data.lastDocUpdate || '',
+      };
+    }
+    return { success: false, error: data.error || 'Check failed' };
+  } catch (err: any) {
+    return { success: false, error: err.message || String(err) };
+  }
 }
 
 export async function testRumahwebConnection(
@@ -155,6 +244,7 @@ export async function pushAllDataToHosting(payload: {
     return { success: false, message: 'URL API Rumahweb belum dikonfigurasi.' };
   }
 
+  isSyncInProgress = true;
   saveSyncConfig({ lastSyncStatus: 'syncing', lastSyncMessage: 'Sedang mengunggah data ke Rumahweb...' });
 
   try {
@@ -184,6 +274,7 @@ export async function pushAllDataToHosting(payload: {
     const result = await response.json();
     if (result.success) {
       const now = new Date().toISOString();
+      saveLastKnownSyncTimestamp(now);
       saveSyncConfig({
         lastSyncStatus: 'success',
         lastSyncTime: now,
@@ -208,6 +299,8 @@ export async function pushAllDataToHosting(payload: {
       lastSyncMessage: errMsg,
     });
     return { success: false, message: errMsg };
+  } finally {
+    isSyncInProgress = false;
   }
 }
 
@@ -226,6 +319,7 @@ export async function pullAllDataFromHosting(): Promise<{
     return { success: false, message: 'URL API Rumahweb belum dikonfigurasi.' };
   }
 
+  isSyncInProgress = true;
   saveSyncConfig({ lastSyncStatus: 'syncing', lastSyncMessage: 'Sedang mengambil data dari Rumahweb...' });
 
   try {
@@ -253,6 +347,7 @@ export async function pullAllDataFromHosting(): Promise<{
       const academicYears: string[] = result.data.academicYears || [];
       const logs: AuditLog[] = result.data.logs || [];
 
+      saveLastKnownSyncTimestamp(now);
       saveSyncConfig({
         lastSyncStatus: 'success',
         lastSyncTime: now,
@@ -284,6 +379,8 @@ export async function pullAllDataFromHosting(): Promise<{
       lastSyncMessage: errMsg,
     });
     return { success: false, message: errMsg };
+  } finally {
+    isSyncInProgress = false;
   }
 }
 
@@ -391,6 +488,10 @@ if ($clientKey !== SYNC_KEY) {
 $action = isset($_GET['action']) ? $_GET['action'] : (isset($body['action']) ? $body['action'] : 'test');
 
 switch ($action) {
+    case 'check_sync':
+        handleCheckSync($pdo);
+        break;
+
     case 'test':
         handleTest($pdo);
         break;
@@ -688,8 +789,8 @@ function handlePullAll($pdo) {
             'fileSize' => $d['file_size'] ?? '',
             'uploadDate' => $d['upload_date'] ?? '',
             'status' => $d['status'] ?? 'Belum Diverifikasi',
-            'verifiedBy' => $d['verified_by'] ?? undefined,
-            'verifiedAt' => $d['verified_at'] ?? undefined,
+            'verifiedBy' => $d['verified_by'] ?? null,
+            'verifiedAt' => $d['verified_at'] ?? null,
             'notes' => $d['notes'] ?? '',
             'fileData' => $d['file_data'] ?? null,
         ];
@@ -706,6 +807,29 @@ function handlePullAll($pdo) {
             'documents' => $documents,
             'academicYears' => !empty($years) ? $years : [],
         ]
+    ]);
+}
+
+function handleCheckSync($pdo) {
+    $stmt1 = $pdo->query("SELECT COUNT(*) AS total, MAX(\`updated_at\`) AS last_updated FROM \`arsip_students\`");
+    $sInfo = $stmt1->fetch();
+
+    $stmt2 = $pdo->query("SELECT COUNT(*) AS total, MAX(\`upload_date\`) AS last_doc FROM \`arsip_documents\`");
+    $dInfo = $stmt2->fetch();
+
+    $stmt3 = $pdo->query("SELECT COUNT(*) AS total FROM \`arsip_academic_years\`");
+    $totalYears = (int)$stmt3->fetchColumn();
+
+    echo json_encode([
+        'success' => true,
+        'counts' => [
+            'students' => (int)($sInfo['total'] ?? 0),
+            'documents' => (int)($dInfo['total'] ?? 0),
+            'academicYears' => $totalYears
+        ],
+        'lastStudentUpdate' => $sInfo['last_updated'] ?? '',
+        'lastDocUpdate' => $dInfo['last_doc'] ?? '',
+        'server_time' => date('Y-m-d H:i:s'),
     ]);
 }
 
