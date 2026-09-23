@@ -3,27 +3,22 @@ import {
   Database,
   Download,
   UploadCloud,
-  RefreshCw,
   ShieldCheck,
-  FileCheck,
   Archive,
-  AlertTriangle,
-  Lock,
-  HardDrive,
   FileCode,
   Server,
   Cloud,
-  CheckCircle2,
-  ExternalLink,
 } from 'lucide-react';
 import { Student, StudentDocument } from '../types';
 import {
   exportDatabaseBackup,
   restoreDatabaseBackup,
-  resetToFactoryDefault,
 } from '../services/storage';
 import { downloadJsonFile, downloadAllStudentsZip } from '../utils/zipExport';
-import { getSyncConfig, RumahwebSyncConfig } from '../services/mysqlSync';
+import {
+  getSyncConfig,
+  RumahwebSyncConfig,
+} from '../services/mysqlSync';
 
 interface BackupSecurityViewProps {
   students: Student[];
@@ -75,21 +70,6 @@ export const BackupSecurityView: React.FC<BackupSecurityViewProps> = ({
     reader.readAsText(file);
   };
 
-  const handleReset = () => {
-    if (
-      window.confirm(
-        'Apakah Anda yakin ingin mengembalikan data ke sampel awal? Seluruh perubahan saat ini akan diganti dengan data demonstrasi bawaan.'
-      )
-    ) {
-      resetToFactoryDefault();
-      onDataRefreshed();
-      setRestoreStatus({
-        success: true,
-        message: 'Sistem berhasil direset ke data sampel awal bawaan sekolah.',
-      });
-    }
-  };
-
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -99,7 +79,7 @@ export const BackupSecurityView: React.FC<BackupSecurityViewProps> = ({
           <span>Cadangan Data (Backup) &amp; Keamanan Arsip</span>
         </h2>
         <p className="text-xs text-slate-500 mt-0.5">
-          Lindungi arsip administrasi siswa dari risiko kehilangan atau kerusakan melalui pencadangan berkala
+          Lindungi arsip administrasi siswa dari risiko kehilangan dan pastikan berkas tersinkronisasi dengan aman
         </p>
       </div>
 
@@ -161,7 +141,7 @@ export const BackupSecurityView: React.FC<BackupSecurityViewProps> = ({
       </div>
 
       {/* Backup Action Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
         {/* Card 1: Ekspor Database JSON */}
         <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between">
           <div className="space-y-3">
@@ -182,21 +162,21 @@ export const BackupSecurityView: React.FC<BackupSecurityViewProps> = ({
               className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-2xs transition"
             >
               <Download className="w-4 h-4" />
-              <span>Unduh Cadangan JSON</span>
+              <span>Unduh File Cadangan</span>
             </button>
           </div>
         </div>
 
-        {/* Card 2: Unduh Berkas ZIP */}
+        {/* Card 2: Ekspor Semua Dokumen (ZIP) */}
         <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between">
           <div className="space-y-3">
             <div className="w-12 h-12 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
               <Archive className="w-6 h-6" />
             </div>
-            <h3 className="font-extrabold text-slate-900 text-base">Ekspor Seluruh Dokumen Digital (ZIP)</h3>
+            <h3 className="font-extrabold text-slate-900 text-base">Ekspor Berkas Fisik Digital (ZIP)</h3>
             <p className="text-xs text-slate-500 leading-relaxed">
-              Mengemas seluruh berkas fisik digital (KK, KTP, Akta Kelahiran, Ijazah, KIP) ke dalam struktur folder
-              rapi per kelas dan per siswa ke dalam file arsip ZIP.
+              Mengunduh seluruh file dokumen siswa (KK, Akta, Ijazah, KIP) ke dalam format ZIP dengan pengelompokan
+              folder otomatis berdasarkan tingkat institusi (SD / SMP / SMK) dan nama siswa.
             </p>
           </div>
 
@@ -243,31 +223,6 @@ export const BackupSecurityView: React.FC<BackupSecurityViewProps> = ({
             </button>
           </div>
         </div>
-
-        {/* Card 4: Reset ke Standar Awal */}
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between">
-          <div className="space-y-3">
-            <div className="w-12 h-12 rounded-xl bg-slate-100 text-slate-600 flex items-center justify-center">
-              <RefreshCw className="w-6 h-6" />
-            </div>
-            <h3 className="font-extrabold text-slate-900 text-base">Muat Ulang Data Sampel Pabrik</h3>
-            <p className="text-xs text-slate-500 leading-relaxed">
-              Mengatur ulang seluruh data ke demonstrasi awal dengan profil siswa terisi, contoh berkas resmi, dan
-              tiga akun petugas demonstrasi.
-            </p>
-          </div>
-
-          <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-between">
-            <span className="text-[11px] text-rose-500 font-medium">Tindakan demonstrasi</span>
-            <button
-              onClick={handleReset}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition"
-            >
-              <RefreshCw className="w-4 h-4 text-slate-500" />
-              <span>Reset Data Demo</span>
-            </button>
-          </div>
-        </div>
       </div>
 
       {/* Security Architecture Summary */}
@@ -278,24 +233,24 @@ export const BackupSecurityView: React.FC<BackupSecurityViewProps> = ({
         </h3>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs text-slate-600">
           <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/70 space-y-1.5">
-            <div className="font-bold text-slate-800">1. Backup Berkala Otomatis &amp; Mandiri</div>
+            <div className="font-bold text-slate-800">1. Sinkronisasi Antar-Perangkat Bersih</div>
             <p className="text-slate-500">
-              Lakukan ekspor cadangan database setiap akhir bulan atau setelah periode penerimaan peserta didik baru
-              (PPDB) selesai.
+              Sistem secara otomatis mendeteksi dan mencegah pemuatan berkas demo lama sehingga Anda dapat berganti
+              laptop atau browser dengan data siswa yang selalu konsisten dan akurat.
             </p>
           </div>
           <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/70 space-y-1.5">
-            <div className="font-bold text-slate-800">2. Pembatasan Hak Akses Staf</div>
+            <div className="font-bold text-slate-800">2. Backup Berkala Otomatis &amp; Mandiri</div>
             <p className="text-slate-500">
-              Akses hanya diberikan kepada operator TU dan Wali Kelas dengan kredensial yang diverifikasi. Dokumen
-              terlindungi dari pihak luar.
+              Lakukan ekspor cadangan database JSON setiap akhir bulan atau setelah periode penerimaan peserta didik baru
+              (PPDB) selesai.
             </p>
           </div>
           <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/70 space-y-1.5">
             <div className="font-bold text-slate-800">3. Integritas Data &amp; Watermarking</div>
             <p className="text-slate-500">
               Dokumen siswa seperti KK dan KTP disertai catatan verifikasi digital dan tersimpan dengan resolusi
-              jelas untuk keperluan pelaporan Kemendikbudistek.
+              jelas untuk keperluan pelaporan Dapodik &amp; Kemenag.
             </p>
           </div>
         </div>

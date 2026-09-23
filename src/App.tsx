@@ -37,6 +37,7 @@ import {
   saveStudentToHosting,
   pushStudentsToHosting,
   executeTwoWaySync,
+  purgeDemoDataFromHosting,
 } from './services/mysqlSync';
 import { Student, StudentDocument, User, VerificationStatus, AuditLog } from './types';
 import { Navbar } from './components/Navbar';
@@ -58,9 +59,14 @@ import { LoginView } from './components/LoginView';
 import { CheckCircle2, AlertCircle } from 'lucide-react';
 
 export default function App() {
-  // Initialize storage once on boot
+  // Initialize storage once on boot and ensure any legacy demo data is purged immediately & silently
   useEffect(() => {
     initializeStorage();
+    refreshAllData();
+    const config = getSyncConfig();
+    if (config.apiUrl) {
+      purgeDemoDataFromHosting().catch(() => {});
+    }
   }, []);
 
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => checkIsAuthenticated());

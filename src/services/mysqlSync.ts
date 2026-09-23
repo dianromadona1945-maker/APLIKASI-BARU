@@ -690,6 +690,7 @@ export async function pushAllDataToHosting(payload: {
   academicYears: string[];
   logs?: AuditLog[];
   mirror?: boolean;
+  clear_all?: boolean;
 }): Promise<{ success: boolean; message: string }> {
   const config = getSyncConfig();
   if (!config.apiUrl) {
@@ -716,6 +717,8 @@ export async function pushAllDataToHosting(payload: {
         academicYears: payload.academicYears,
         logs: payload.logs || [],
         deletedIds: getDeletedStudentIds(),
+        deletedDocIds: getDeletedDocIds(),
+        clear_all: payload.clear_all === true,
         mirror: payload.mirror === true, // Default to FALSE to prevent destructive deletion
       }),
     });
@@ -756,6 +759,86 @@ export async function pushAllDataToHosting(payload: {
   } finally {
     isSyncInProgress = false;
   }
+}
+
+export async function purgeDemoDataFromHosting(): Promise<{ success: boolean; message: string }> {
+  const config = getSyncConfig();
+  if (!config.apiUrl) {
+    return { success: true, message: 'Data demo lokal telah dibersihkan.' };
+  }
+
+  try {
+    const url = new URL(config.apiUrl);
+    url.searchParams.set('action', 'purge_demo');
+    const res = await fetch(url.toString(), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Sync-Key': config.syncKey.trim(),
+      },
+      body: JSON.stringify({ key: config.syncKey.trim() }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.success) {
+        return { success: true, message: data.message || 'Data sampel awal berhasil dihapus dari cloud.' };
+      }
+    }
+  } catch {}
+
+  // Fallback: delete each demo student and orphan docs directly
+  const demoIds = ['std-001', 'std-002', 'std-003', 'std-004', 'std-005', 'std-006'];
+  for (const id of demoIds) {
+    try {
+      await deleteStudentFromHosting(id);
+    } catch {}
+  }
+  try {
+    await purgeOrphanDocumentsOnHosting();
+  } catch {}
+
+  return {
+    success: true,
+    message: 'Seluruh berkas & siswa sampel awal berhasil dihapus permanen dari MySQL cloud.',
+  };
+}
+
+export async function wipeAllDataOnHosting(): Promise<{ success: boolean; message: string }> {
+  const config = getSyncConfig();
+  if (!config.apiUrl) {
+    return { success: true, message: 'Data lokal telah dikosongkan.' };
+  }
+
+  try {
+    const url = new URL(config.apiUrl);
+    url.searchParams.set('action', 'clear_all');
+    const response = await fetch(url.toString(), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Sync-Key': config.syncKey.trim(),
+      },
+      body: JSON.stringify({
+        key: config.syncKey.trim(),
+        clear_all: true,
+      }),
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      if (data.success) {
+        return { success: true, message: 'Database cloud MySQL berhasil dikosongkan.' };
+      }
+    }
+  } catch {}
+
+  return await pushAllDataToHosting({
+    students: [],
+    documents: [],
+    academicYears: getAcademicYears(),
+    clear_all: true,
+    mirror: true,
+  });
 }
 
 export async function pullAllDataFromHosting(): Promise<{
@@ -974,6 +1057,14 @@ switch ($action) {
         handleCleanOrphans($pdo);
         break;
 
+    case 'purge_demo':
+        handlePurgeDemo($pdo);
+        break;
+
+    case 'clear_all':
+        handleClearAll($pdo);
+        break;
+
     case 'push_all':
         handlePushAll($pdo, $body);
         break;
@@ -1110,6 +1201,43 @@ function handleCleanOrphans($pdo) {
     } catch (Exception $e) {
         http_response_code(500);
         echo json_encode(['success' => false, 'error' => 'Gagal membersihkan dokumen yatim: ' . $e->getMessage()]);
+    }
+}
+
+function handlePurgeDemo($pdo) {
+    try {
+        $demoIds = ['std-001', 'std-002', 'std-003', 'std-004', 'std-005', 'std-006'];
+        $placeholders = implode(',', array_fill(0, count($demoIds), '?'));
+        
+        $delDocs = $pdo->prepare("DELETE FROM \`arsip_documents\` WHERE \`student_id\` IN ($placeholders) OR \`id\` LIKE 'doc-std-00%'");
+        $delDocs->execute($demoIds);
+
+        $delStudents = $pdo->prepare("DELETE FROM \`arsip_students\` WHERE \`id\` IN ($placeholders)");
+        $delStudents->execute($demoIds);
+
+        $pdo->exec("DELETE FROM \`arsip_documents\` WHERE \`student_id\` NOT IN (SELECT \`id\` FROM \`arsip_students\`)");
+
+        echo json_encode([
+            'success' => true,
+            'message' => 'Seluruh profil dan dokumen sampel demonstrasi awal berhasil dihapus permanen dari MySQL cloud.'
+        ]);
+    } catch (Exception $e) {
+        http_response_code(500);
+        echo json_encode(['success' => false, 'error' => 'Gagal menghapus data sampel: ' . $e->getMessage()]);
+    }
+}
+
+function handleClearAll($pdo) {
+    try {
+        $pdo->exec("DELETE FROM \`arsip_documents\`");
+        $pdo->exec("DELETE FROM \`arsip_students\`");
+        echo json_encode([
+            'success' => true,
+            'message' => 'Seluruh data siswa dan dokumen di database MySQL cloud berhasil dikosongkan.'
+        ]);
+    } catch (Exception $e) {
+        http_response_code(500);
+        echo json_encode(['success' => false, 'error' => 'Gagal mengosongkan data di cloud: ' . $e->getMessage()]);
     }
 }
 

@@ -172,136 +172,170 @@ export function extractYearCycle(academicYearString: string): string {
   return match ? match[1] : academicYearString;
 }
 
-// Seed student profiles across 3 institutions: SD, SMP, and SMK
-const SEED_STUDENTS: Student[] = [
-  {
-    id: 'std-001',
-    name: 'Ahmad Faiz Zulkarnain',
-    nis: '23241001',
-    nisn: '0089123456',
-    nik: '3201081503080002',
-    birthPlace: 'Bogor',
-    birthDate: '15 Maret 2012',
-    gender: 'L',
-    institution: 'SD',
-    classRoom: 'SD - 2024/2025',
-    address: 'Jl. Pajajaran No. 45, RT 02/RW 05, Kel. Sukasari, Kota Bogor',
-    parentName: 'H. Sudarsono, S.T.',
-    parentPhone: '0812-3456-7890',
-    status: 'Aktif',
-    academicYear: 'SD - 2024/2025',
-    createdAt: '2024-07-10T08:00:00.000Z',
-    updatedAt: '2024-07-15T10:30:00.000Z',
-  },
-  {
-    id: 'std-002',
-    name: 'Nadia Salsabila Putri',
-    nis: '23241002',
-    nisn: '0087654321',
-    nik: '3201085208080004',
-    birthPlace: 'Jakarta',
-    birthDate: '12 Agustus 2013',
-    gender: 'P',
-    institution: 'SD',
-    classRoom: 'SD - 2024/2025',
-    address: 'Komplek Baranangsiang Indah Blok C2 No. 12, Kota Bogor',
-    parentName: 'Ir. Hendra Gunawan',
-    parentPhone: '0813-8899-2211',
-    status: 'Aktif',
-    academicYear: 'SD - 2024/2025',
-    createdAt: '2024-07-10T08:15:00.000Z',
-    updatedAt: '2024-07-16T11:00:00.000Z',
-  },
-  {
-    id: 'std-003',
-    name: 'Muhammad Rizky Pratama',
-    nis: '23241003',
-    nisn: '0078901234',
-    nik: '3201082005070001',
-    birthPlace: 'Bandung',
-    birthDate: '20 Mei 2010',
-    gender: 'L',
-    institution: 'SMP',
-    classRoom: 'SMP - 2025/2026',
-    address: 'Jl. Sholeh Iskandar No. 88, Tanah Sareal, Kota Bogor',
-    parentName: 'Drs. Agus Setiawan',
-    parentPhone: '0857-1122-3344',
-    status: 'Aktif',
-    academicYear: 'SMP - 2025/2026',
-    createdAt: '2023-07-12T09:00:00.000Z',
-    updatedAt: '2024-07-12T09:00:00.000Z',
-  },
-  {
-    id: 'std-004',
-    name: 'Siti Rahma Azzahra',
-    nis: '23241004',
-    nisn: '0086549871',
-    nik: '3201086011080003',
-    birthPlace: 'Depok',
-    birthDate: '20 November 2010',
-    gender: 'P',
-    institution: 'SMP',
-    classRoom: 'SMP - 2025/2026',
-    address: 'Kp. Muara RT 03/RW 01, Kel. Pasir Jaya, Kota Bogor',
-    parentName: 'Mulyadi (Penerima PIP)',
-    parentPhone: '0896-7788-9900',
-    status: 'Aktif',
-    academicYear: 'SMP - 2025/2026',
-    createdAt: '2024-07-11T13:20:00.000Z',
-    updatedAt: '2024-07-18T14:40:00.000Z',
-  },
-  {
-    id: 'std-005',
-    name: 'Dimas Aditya Nugroho',
-    nis: '23241005',
-    nisn: '0071239874',
-    nik: '3201081001070005',
-    birthPlace: 'Surabaya',
-    birthDate: '10 Januari 2007',
-    gender: 'L',
-    institution: 'SMK',
-    classRoom: 'SMK - 2026/2027',
-    address: 'Jl. R.E. Martadinata No. 19, Bogor Tengah',
-    parentName: 'Budi Nugroho, S.E.',
-    parentPhone: '0812-9900-1122',
-    status: 'Aktif',
-    academicYear: 'SMK - 2026/2027',
-    createdAt: '2023-07-14T10:00:00.000Z',
-    updatedAt: '2024-08-01T08:00:00.000Z',
-  },
-  {
-    id: 'std-006',
-    name: 'Clara Anindya Putri',
-    nis: '23241006',
-    nisn: '0069871234',
-    nik: '3201084504060002',
-    birthPlace: 'Bogor',
-    birthDate: '05 April 2007',
-    gender: 'P',
-    institution: 'SMK',
-    classRoom: 'SMK - 2026/2027',
-    address: 'Jl. Pandu Raya No. 102, Bantarjati, Kota Bogor',
-    parentName: 'dr. Anton Wijaya, Sp.A',
-    parentPhone: '0811-2233-4455',
-    status: 'Aktif',
-    academicYear: 'SMK - 2026/2027',
-    createdAt: '2022-07-15T09:00:00.000Z',
-    updatedAt: '2024-07-20T16:00:00.000Z',
-  },
+// Known legacy demo student IDs and names to permanently purge and never resurrect
+export const DEMO_STUDENT_IDS = ['std-001', 'std-002', 'std-003', 'std-004', 'std-005', 'std-006'];
+export const DEMO_STUDENT_NAMES = [
+  'Ahmad Faiz Zulkarnain',
+  'Nadia Salsabila Putri',
+  'Muhammad Rizky Pratama',
+  'Siti Rahma Azzahra',
+  'Dimas Aditya Nugroho',
+  'Clara Anindya Putri',
 ];
 
-// Initialize default seed data
+export function isDemoStudent(student: { id?: string; name?: string }): boolean {
+  if (!student) return false;
+  if (student.id && DEMO_STUDENT_IDS.includes(student.id)) return true;
+  if (student.name && DEMO_STUDENT_NAMES.some((dn) => dn.toLowerCase().trim() === (student.name || '').toLowerCase().trim())) {
+    return true;
+  }
+  return false;
+}
+
+export function isDemoDocument(doc: { id?: string; studentId?: string; fileType?: string; fileDataUrl?: string }): boolean {
+  if (!doc) return false;
+  if (doc.id && (doc.id.startsWith('doc-std-00') || DEMO_STUDENT_IDS.some((sid) => doc.id!.includes(sid)))) {
+    return true;
+  }
+  if (doc.studentId && DEMO_STUDENT_IDS.includes(doc.studentId)) {
+    return true;
+  }
+  if (
+    doc.fileType === 'image/svg+xml' &&
+    doc.fileDataUrl &&
+    (doc.fileDataUrl.includes('Ahmad Faiz') ||
+      doc.fileDataUrl.includes('Nadia Salsabila') ||
+      doc.fileDataUrl.includes('Siti Rahma') ||
+      doc.fileDataUrl.includes('Clara Anindya') ||
+      doc.fileDataUrl.includes('sample-doc-watermark'))
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Permanently purges any initial demo students (std-001..006) and dummy SVG documents
+ * from localStorage and records tombstones so they are deleted from MySQL cloud and never reappear.
+ */
+export function purgeLegacyDemoData(): { deletedStudents: number; deletedDocs: number } {
+  if (typeof window === 'undefined') return { deletedStudents: 0, deletedDocs: 0 };
+
+  let rawStudents: Student[] = [];
+  try {
+    const sStr = localStorage.getItem(STORAGE_KEYS.STUDENTS);
+    if (sStr) rawStudents = JSON.parse(sStr);
+  } catch {}
+
+  let rawDocs: StudentDocument[] = [];
+  try {
+    const dStr = localStorage.getItem(STORAGE_KEYS.DOCUMENTS);
+    if (dStr) rawDocs = JSON.parse(dStr);
+  } catch {}
+
+  const demoStudentIds = new Set<string>(DEMO_STUDENT_IDS);
+  const toDeleteStudentIds = new Set<string>();
+
+  rawStudents.forEach((s) => {
+    if (isDemoStudent(s)) {
+      toDeleteStudentIds.add(s.id);
+      demoStudentIds.add(s.id);
+      recordDeletedStudentId(s.id);
+    }
+  });
+
+  // Always blacklist all 6 demo IDs
+  DEMO_STUDENT_IDS.forEach((id) => recordDeletedStudentId(id));
+
+  const keptStudents = rawStudents.filter((s) => !toDeleteStudentIds.has(s.id) && !isDemoStudent(s));
+  const deletedStudents = rawStudents.length - keptStudents.length;
+
+  const toDeleteDocIds = new Set<string>();
+  rawDocs.forEach((d) => {
+    if (isDemoDocument(d) || toDeleteStudentIds.has(d.studentId) || demoStudentIds.has(d.studentId)) {
+      toDeleteDocIds.add(d.id);
+      recordDeletedDocId(d.id);
+      if (d.studentId && d.docType) {
+        recordDeletedDocKey(d.studentId, d.docType);
+      }
+    }
+  });
+
+  const keptDocs = rawDocs.filter(
+    (d) => !toDeleteDocIds.has(d.id) && !isDemoDocument(d) && !toDeleteStudentIds.has(d.studentId)
+  );
+  const deletedDocs = rawDocs.length - keptDocs.length;
+
+  localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(keptStudents));
+  localStorage.setItem(STORAGE_KEYS.DOCUMENTS, JSON.stringify(keptDocs));
+  localStorage.setItem('arsip_demo_purged_permanently_v2', 'true');
+
+  // Also clean demo audit logs
+  try {
+    const lStr = localStorage.getItem(STORAGE_KEYS.LOGS);
+    if (lStr) {
+      const logs: AuditLog[] = JSON.parse(lStr);
+      const cleanLogs = logs.filter(
+        (l) => !['log-001', 'log-002', 'log-003'].includes(l.id) && (!l.studentId || !demoStudentIds.has(l.studentId))
+      );
+      localStorage.setItem(STORAGE_KEYS.LOGS, JSON.stringify(cleanLogs));
+    }
+  } catch {}
+
+  return { deletedStudents, deletedDocs };
+}
+
+/**
+ * Completely wipe ALL students and documents from localStorage and record tombstones
+ * so cloud MySQL is also cleared upon sync.
+ */
+export function wipeAllData(): void {
+  if (typeof window === 'undefined') return;
+
+  let allStudents: Student[] = [];
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.STUDENTS);
+    if (raw) allStudents = JSON.parse(raw);
+  } catch {}
+
+  let allDocs: StudentDocument[] = [];
+  try {
+    const rawD = localStorage.getItem(STORAGE_KEYS.DOCUMENTS);
+    if (rawD) allDocs = JSON.parse(rawD);
+  } catch {}
+
+  allStudents.forEach((s) => recordDeletedStudentId(s.id));
+  allDocs.forEach((d) => {
+    recordDeletedDocId(d.id);
+    if (d.studentId && d.docType) {
+      recordDeletedDocKey(d.studentId, d.docType);
+    }
+  });
+
+  localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify([]));
+  localStorage.setItem(STORAGE_KEYS.DOCUMENTS, JSON.stringify([]));
+
+  const wipeLog: AuditLog = {
+    id: `log-wipe-${Date.now()}`,
+    timestamp: new Date().toISOString(),
+    action: 'DELETE_STUDENT',
+    userId: 'admin',
+    userName: 'Administrator',
+    userRole: 'admin',
+    details: `Seluruh data siswa (${allStudents.length} siswa) dan arsip dokumen (${allDocs.length} berkas) telah dikosongkan.`,
+  };
+  localStorage.setItem(STORAGE_KEYS.LOGS, JSON.stringify([wipeLog]));
+  localStorage.setItem('arsip_demo_purged_permanently_v2', 'true');
+}
+
+// Initialize default data cleanly with ZERO fake demo students/documents
 export function initializeStorage(): void {
   if (typeof window === 'undefined') return;
 
-  // Clear toxic local document tombstones so other laptops can sync documents freely
-  const tombstoneCleaned = localStorage.getItem('arsip_tombstone_clean_v3');
-  if (!tombstoneCleaned) {
-    try {
-      localStorage.removeItem(STORAGE_KEYS.DELETED_DOC_IDS);
-      localStorage.removeItem(STORAGE_KEYS.DELETED_DOC_KEYS);
-      localStorage.setItem('arsip_tombstone_clean_v3', 'true');
-    } catch {}
+  // Always purge legacy demo data on any startup or tab load
+  const isPurged = localStorage.getItem('arsip_demo_purged_permanently_v2');
+  if (!isPurged) {
+    purgeLegacyDemoData();
   }
 
   const isInitialized = localStorage.getItem(STORAGE_KEYS.INITIALIZED);
@@ -310,132 +344,18 @@ export function initializeStorage(): void {
     localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(INITIAL_USERS));
     localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(INITIAL_USERS[0]));
 
-    // Seed students
-    localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(SEED_STUDENTS));
+    // CLEAN INITIAL STATE: Start with 0 students and 0 documents!
+    // NEVER seed demo students or sample SVG files on new laptops/browsers!
+    localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify([]));
+    localStorage.setItem(STORAGE_KEYS.DOCUMENTS, JSON.stringify([]));
+    localStorage.setItem(STORAGE_KEYS.ACADEMIC_YEARS, JSON.stringify(DEFAULT_ACADEMIC_YEARS));
+    localStorage.setItem(STORAGE_KEYS.LOGS, JSON.stringify([]));
 
-    // Seed documents for students
-    const documents: StudentDocument[] = [];
+    // Ensure all demo student IDs are tombstoned from day 1
+    DEMO_STUDENT_IDS.forEach((id) => recordDeletedStudentId(id));
 
-    // std-001 (Ahmad Faiz): All mandatory docs uploaded and verified!
-    const std1 = SEED_STUDENTS[0];
-    const docTypesStd1: DocumentType[] = ['kk', 'akta', 'ijazah', 'ktp', 'kip'];
-    docTypesStd1.forEach((type, idx) => {
-      documents.push({
-        id: `doc-${std1.id}-${type}`,
-        studentId: std1.id,
-        docType: type,
-        title: getDocumentTitle(type, std1.name),
-        fileName: `${type.toUpperCase()}_${std1.nisn}.pdf`,
-        fileType: 'image/svg+xml',
-        fileSize: 245000 + idx * 31000,
-        fileDataUrl: generateSampleDocumentDataUrl(type, std1),
-        uploadedAt: '2024-07-12T09:30:00.000Z',
-        uploadedBy: 'Petugas TU (Mamat M.)',
-        verificationStatus: 'verified',
-        notes: 'Dokumen asli telah diverifikasi dan valid.',
-        version: 1,
-      });
-    });
-
-    // std-002 (Nadia Salsabila): KK and Akta verified, Ijazah pending
-    const std2 = SEED_STUDENTS[1];
-    (['kk', 'akta', 'ijazah'] as DocumentType[]).forEach((type) => {
-      documents.push({
-        id: `doc-${std2.id}-${type}`,
-        studentId: std2.id,
-        docType: type,
-        title: getDocumentTitle(type, std2.name),
-        fileName: `${type.toUpperCase()}_${std2.nisn}.pdf`,
-        fileType: 'image/svg+xml',
-        fileSize: 280000,
-        fileDataUrl: generateSampleDocumentDataUrl(type, std2),
-        uploadedAt: '2024-07-16T11:15:00.000Z',
-        uploadedBy: 'Petugas TU (Mamat M.)',
-        verificationStatus: type === 'ijazah' ? 'pending' : 'verified',
-        notes: type === 'ijazah' ? 'Menunggu verifikasi stempel legalisir basah.' : 'Data valid.',
-        version: 1,
-      });
-    });
-
-    // std-004 (Siti Rahma - PIP recipient): KK, Akta, KIP uploaded
-    const std4 = SEED_STUDENTS[3];
-    (['kk', 'akta', 'kip'] as DocumentType[]).forEach((type) => {
-      documents.push({
-        id: `doc-${std4.id}-${type}`,
-        studentId: std4.id,
-        docType: type,
-        title: getDocumentTitle(type, std4.name),
-        fileName: `${type.toUpperCase()}_${std4.nisn}.pdf`,
-        fileType: 'image/svg+xml',
-        fileSize: 310000,
-        fileDataUrl: generateSampleDocumentDataUrl(type, std4),
-        uploadedAt: '2024-07-18T14:40:00.000Z',
-        uploadedBy: 'Admin (Dian R.)',
-        verificationStatus: 'verified',
-        notes: type === 'kip' ? 'Kartu Indonesia Pintar terdaftar aktif di Dapodik.' : 'Valid.',
-        version: 1,
-      });
-    });
-
-    // std-006 (Clara Anindya): Full docs + Sertifikat Prestasi
-    const std6 = SEED_STUDENTS[5];
-    (['kk', 'akta', 'ijazah', 'lainnya'] as DocumentType[]).forEach((type) => {
-      documents.push({
-        id: `doc-${std6.id}-${type}`,
-        studentId: std6.id,
-        docType: type,
-        title: getDocumentTitle(type, std6.name),
-        fileName: `${type.toUpperCase()}_${std6.nisn}.pdf`,
-        fileType: 'image/svg+xml',
-        fileSize: 290000,
-        fileDataUrl: generateSampleDocumentDataUrl(type, std6),
-        uploadedAt: '2024-07-20T16:00:00.000Z',
-        uploadedBy: 'Admin (Dian R.)',
-        verificationStatus: 'verified',
-        notes: 'Arsip lengkap semester awal.',
-        version: 1,
-      });
-    });
-
-    localStorage.setItem(STORAGE_KEYS.DOCUMENTS, JSON.stringify(documents));
-
-    // Seed audit logs
-    const initialLogs: AuditLog[] = [
-      {
-        id: 'log-001',
-        timestamp: '2026-09-17T08:30:00.000Z',
-        action: 'LOGIN',
-        userId: INITIAL_USERS[0].id,
-        userName: INITIAL_USERS[0].name,
-        userRole: INITIAL_USERS[0].role,
-        details: 'Admin berhasil masuk ke Sistem Arsip Dokumen Siswa.',
-      },
-      {
-        id: 'log-002',
-        timestamp: '2026-09-17T08:45:00.000Z',
-        action: 'VERIFY_DOC',
-        userId: INITIAL_USERS[0].id,
-        userName: INITIAL_USERS[0].name,
-        userRole: INITIAL_USERS[0].role,
-        studentId: std1.id,
-        studentName: std1.name,
-        details: 'Verifikasi berkas Ijazah & KK selesai (Status: Valid).',
-      },
-      {
-        id: 'log-003',
-        timestamp: '2026-09-17T09:15:00.000Z',
-        action: 'UPLOAD_DOC',
-        userId: INITIAL_USERS[1].id,
-        userName: INITIAL_USERS[1].name,
-        userRole: INITIAL_USERS[1].role,
-        studentId: std4.id,
-        studentName: std4.name,
-        details: 'Mengunggah Kartu Indonesia Pintar (KIP) format digital.',
-      },
-    ];
-
-    localStorage.setItem(STORAGE_KEYS.LOGS, JSON.stringify(initialLogs));
     localStorage.setItem(STORAGE_KEYS.INITIALIZED, 'true');
+    localStorage.setItem('arsip_demo_purged_permanently_v2', 'true');
   }
 }
 
@@ -1122,9 +1042,10 @@ export function smartMergeRemoteData(data: {
   for (const remote of remoteList) {
     if (!remote || !remote.id) continue;
 
-    // If locally deleted on this laptop, do NOT resurrect it! Mark to delete on server
-    if (deletedIds.has(remote.id)) {
+    // If demo student or locally deleted on this laptop, do NOT resurrect it! Mark to delete on server
+    if (isDemoStudent(remote) || deletedIds.has(remote.id)) {
       deletedToSync.push(remote.id);
+      recordDeletedStudentId(remote.id);
       continue;
     }
 
@@ -1171,8 +1092,10 @@ export function smartMergeRemoteData(data: {
 
   // 2. Process remaining Local Students that remote does NOT have
   for (const [id, local] of localMap.entries()) {
-    if (deletedIds.has(id)) {
+    // If demo student or deleted, do NOT keep it: mark for deletion on server
+    if (isDemoStudent(local) || deletedIds.has(id)) {
       deletedToSync.push(id);
+      recordDeletedStudentId(id);
       continue;
     }
 
@@ -1241,9 +1164,17 @@ export function smartMergeRemoteData(data: {
       syncedWithCloud: true,
     };
 
-    // If student was deleted or does not exist, do NOT resurrect document!
-    if (deletedIds.has(rDoc.studentId) || !mergedMap.has(rDoc.studentId)) {
+    // If demo doc, or student was deleted or demo student, or does not exist, do NOT resurrect document!
+    if (
+      isDemoDocument(rDoc) ||
+      DEMO_STUDENT_IDS.includes(rDoc.studentId) ||
+      deletedIds.has(rDoc.studentId) ||
+      deletedDocIds.has(rDoc.id) ||
+      deletedDocKeys.has(`${rDoc.studentId}:${(rDoc.docType || '').toLowerCase()}`) ||
+      !mergedMap.has(rDoc.studentId)
+    ) {
       deletedDocsToSync.push(rDoc.id);
+      recordDeletedDocId(rDoc.id);
       continue;
     }
 
@@ -1296,9 +1227,16 @@ export function smartMergeRemoteData(data: {
 
   // 3b. Process remaining Local Documents
   for (const [id, lDoc] of localDocMap.entries()) {
-    // If orphaned (student no longer exists), do NOT keep it!
-    if (deletedIds.has(lDoc.studentId) || !mergedMap.has(lDoc.studentId)) {
+    // If demo doc or orphaned, do NOT keep it!
+    if (
+      isDemoDocument(lDoc) ||
+      DEMO_STUDENT_IDS.includes(lDoc.studentId) ||
+      deletedIds.has(lDoc.studentId) ||
+      deletedDocIds.has(id) ||
+      !mergedMap.has(lDoc.studentId)
+    ) {
       deletedDocsToSync.push(id);
+      recordDeletedDocId(id);
       continue;
     }
 
@@ -1379,6 +1317,7 @@ export function resetToFactoryDefault(): void {
   localStorage.removeItem(STORAGE_KEYS.USERS);
   localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
   localStorage.removeItem(STORAGE_KEYS.ACADEMIC_YEARS);
+  localStorage.setItem('arsip_demo_purged_permanently_v2', 'true');
   initializeStorage();
 }
 
