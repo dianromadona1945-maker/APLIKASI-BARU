@@ -1306,7 +1306,7 @@ export function smartMergeRemoteData(data: {
     }
 
     // If document was already confirmed synced in the past but remote now missing it, it was deleted on cloud
-    if (lDoc.syncedWithCloud === true && remoteDocs.length > 0) {
+    if (lDoc.syncedWithCloud === true) {
       recordDeletedDocId(id);
       continue;
     }

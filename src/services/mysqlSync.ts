@@ -639,9 +639,7 @@ export async function executeTwoWaySync(): Promise<{
     }, '');
 
     saveLastKnownSyncTimestamp(latestStudentUpdate || now);
-    if (latestDocUpdate) {
-      saveLastKnownDocSyncTimestamp(latestDocUpdate);
-    }
+    saveLastKnownDocSyncTimestamp(latestDocUpdate || '');
 
     const finalDocsList = getDocuments();
     const msg = `Sinkronisasi Live sukses: ${mergeResult.mergedStudents.length} siswa (${pushedCount} dikirim, ${mergeResult.remoteStudentsAddedOrUpdated} ditarik), ${finalDocsList.length} dokumen (${pushedDocsCount} dikirim, ${mergeResult.remoteDocsAddedOrUpdated} ditarik)`;
