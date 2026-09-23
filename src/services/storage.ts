@@ -12,6 +12,7 @@ const STORAGE_KEYS = {
   IS_AUTHENTICATED: 'arsip_auth_state_v1',
   ACADEMIC_YEARS: 'arsip_academic_years_v3',
   DELETED_STUDENT_IDS: 'arsip_deleted_student_ids_v1',
+  DELETED_DOC_IDS: 'arsip_deleted_doc_ids_v1',
 };
 
 // Tombstone tracking for deleted students across devices
@@ -60,6 +61,57 @@ export function markStudentsAsSynced(studentIds: string[]): void {
       localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(updated));
     }
   } catch {}
+}
+
+// Tombstone tracking for deleted documents across devices
+export function getDeletedDocIds(): string[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.DELETED_DOC_IDS);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function recordDeletedDocId(docId: string): void {
+  try {
+    const list = getDeletedDocIds();
+    if (!list.includes(docId)) {
+      list.push(docId);
+      localStorage.setItem(STORAGE_KEYS.DELETED_DOC_IDS, JSON.stringify(list.slice(-1000)));
+    }
+  } catch {}
+}
+
+export function removeDeletedDocId(docId: string): void {
+  try {
+    const list = getDeletedDocIds().filter((id) => id !== docId);
+    localStorage.setItem(STORAGE_KEYS.DELETED_DOC_IDS, JSON.stringify(list));
+  } catch {}
+}
+
+export function markDocumentsAsSynced(docIds: string[]): void {
+  try {
+    const idSet = new Set(docIds);
+    const docs = getDocuments();
+    let changed = false;
+    const updated = docs.map((d) => {
+      if (idSet.has(d.id) && !d.syncedWithCloud) {
+        changed = true;
+        return { ...d, syncedWithCloud: true };
+      }
+      return sDoc(d);
+    });
+    if (changed) {
+      localStorage.setItem(STORAGE_KEYS.DOCUMENTS, JSON.stringify(updated));
+    }
+  } catch {}
+}
+
+function sDoc(d: StudentDocument): StudentDocument {
+  return d;
 }
 
 // Helper: parse institution from string (SD, SMP, or SMK)
@@ -617,8 +669,9 @@ export function deleteStudent(studentId: string): void {
   const updated = students.filter((s) => s.id !== studentId);
   localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(updated));
 
-  // Also remove documents
+  // Also remove documents and track their tombstones
   const docs = getDocuments();
+  docs.filter((d) => d.studentId === studentId).forEach((d) => recordDeletedDocId(d.id));
   const updatedDocs = docs.filter((d) => d.studentId !== studentId);
   localStorage.setItem(STORAGE_KEYS.DOCUMENTS, JSON.stringify(updatedDocs));
 }
@@ -634,18 +687,25 @@ export function getDocuments(studentId?: string): StudentDocument[] {
   return allDocs;
 }
 
-export function saveDocument(doc: StudentDocument): void {
+export function saveDocument(doc: StudentDocument): StudentDocument {
   const docs = getDocuments();
+  removeDeletedDocId(doc.id);
+  const docWithSync: StudentDocument = {
+    ...doc,
+    syncedWithCloud: false,
+  };
   const idx = docs.findIndex((d) => d.id === doc.id);
   if (idx !== -1) {
-    docs[idx] = doc;
+    docs[idx] = docWithSync;
   } else {
-    docs.unshift(doc);
+    docs.unshift(docWithSync);
   }
   localStorage.setItem(STORAGE_KEYS.DOCUMENTS, JSON.stringify(docs));
+  return docWithSync;
 }
 
 export function deleteDocument(docId: string): void {
+  recordDeletedDocId(docId);
   const docs = getDocuments();
   const updated = docs.filter((d) => d.id !== docId);
   localStorage.setItem(STORAGE_KEYS.DOCUMENTS, JSON.stringify(updated));
@@ -657,6 +717,7 @@ export function verifyDocument(docId: string, status: VerificationStatus, notes?
   if (doc) {
     doc.verificationStatus = status;
     if (notes !== undefined) doc.notes = notes;
+    doc.syncedWithCloud = false;
     localStorage.setItem(STORAGE_KEYS.DOCUMENTS, JSON.stringify(docs));
     return doc;
   }
@@ -949,8 +1010,12 @@ export interface SmartMergeResult {
   mergedStudents: Student[];
   studentsToPush: Student[];
   deletedToSync: string[];
+  docsToPush: StudentDocument[];
+  deletedDocsToSync: string[];
   localStudentsAddedOrUpdated: number;
   remoteStudentsAddedOrUpdated: number;
+  localDocsAddedOrUpdated: number;
+  remoteDocsAddedOrUpdated: number;
 }
 
 export function smartMergeRemoteData(data: {
@@ -1061,33 +1126,110 @@ export function smartMergeRemoteData(data: {
   const finalStudents = Array.from(mergedMap.values());
   localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(finalStudents));
 
-  // 3. Merge Documents (preserving base64 dataUrl if local already has it)
-  if (data.documents && Array.isArray(data.documents)) {
-    const localDocs = getDocuments();
-    const docMap = new Map<string, StudentDocument>();
-    localDocs.forEach((d) => docMap.set(d.id, d));
+  // 3. Bidirectional Smart Merge for Documents
+  const localDocs = getDocuments();
+  const deletedDocIds = new Set(getDeletedDocIds());
+  const remoteDocs = Array.isArray(data.documents) ? data.documents : [];
+  const docsToPush: StudentDocument[] = [];
+  const deletedDocsToSync: string[] = [];
+  let localDocsAddedOrUpdated = 0;
+  let remoteDocsAddedOrUpdated = 0;
 
-    for (const rDoc of data.documents) {
-      if (!rDoc || !rDoc.id) continue;
-      if (deletedIds.has(rDoc.studentId) || !mergedMap.has(rDoc.studentId)) continue;
+  const docMap = new Map<string, StudentDocument>();
+  const localDocMap = new Map<string, StudentDocument>();
+  localDocs.forEach((d) => localDocMap.set(d.id, d));
 
-      const lDoc = docMap.get(rDoc.id);
-      if (lDoc) {
-        docMap.set(rDoc.id, {
-          ...lDoc,
-          ...rDoc,
-          fileDataUrl: rDoc.fileDataUrl || lDoc.fileDataUrl,
-        });
-      } else {
-        docMap.set(rDoc.id, rDoc);
-      }
+  // 3a. Process Remote Documents
+  for (const rawRDoc of remoteDocs) {
+    if (!rawRDoc || !rawRDoc.id) continue;
+
+    // Normalize fields from either camelCase or snake_case / PHP fallback
+    const rDoc: StudentDocument = {
+      id: rawRDoc.id,
+      studentId: rawRDoc.studentId || (rawRDoc as any).student_id,
+      docType: (rawRDoc.docType || (rawRDoc as any).type || 'lainnya').toLowerCase() as any,
+      title: rawRDoc.title || (rawRDoc as any).file_name || 'Dokumen Siswa',
+      fileName: rawRDoc.fileName || (rawRDoc as any).file_name || 'dokumen.pdf',
+      fileType: rawRDoc.fileType || 'application/pdf',
+      fileSize: Number(rawRDoc.fileSize || (rawRDoc as any).file_size || 0),
+      fileDataUrl: rawRDoc.fileDataUrl || (rawRDoc as any).file_data || (rawRDoc as any).fileData || '',
+      uploadedAt: rawRDoc.uploadedAt || (rawRDoc as any).upload_date || (rawRDoc as any).uploadDate || new Date().toISOString(),
+      uploadedBy: rawRDoc.uploadedBy || (rawRDoc as any).verified_by || 'Petugas TU',
+      verificationStatus: (['verified', 'pending', 'revision', 'unverified'].includes(rawRDoc.verificationStatus)
+        ? rawRDoc.verificationStatus
+        : (rawRDoc as any).status === 'Terverifikasi'
+        ? 'verified'
+        : (rawRDoc as any).status === 'Perlu Revisi'
+        ? 'revision'
+        : 'pending') as any,
+      notes: rawRDoc.notes || '',
+      version: rawRDoc.version || 1,
+      syncedWithCloud: true,
+    };
+
+    // If document was deleted locally or its student was deleted, do NOT resurrect it!
+    if (deletedDocIds.has(rDoc.id) || deletedIds.has(rDoc.studentId) || !mergedMap.has(rDoc.studentId)) {
+      deletedDocsToSync.push(rDoc.id);
+      continue;
     }
 
-    const finalDocs = Array.from(docMap.values()).filter(
-      (d) => !deletedIds.has(d.studentId) && mergedMap.has(d.studentId)
-    );
-    localStorage.setItem(STORAGE_KEYS.DOCUMENTS, JSON.stringify(finalDocs));
+    const lDoc = localDocMap.get(rDoc.id);
+    if (lDoc) {
+      if (lDoc.syncedWithCloud === false) {
+        // Local has unsynced updates, keep local data and push
+        const mergedDoc = {
+          ...rDoc,
+          ...lDoc,
+          fileDataUrl: lDoc.fileDataUrl || rDoc.fileDataUrl,
+        };
+        docMap.set(rDoc.id, mergedDoc);
+        docsToPush.push(mergedDoc);
+        localDocsAddedOrUpdated++;
+      } else {
+        // Remote is authoritative, keep existing local dataUrl if remote dataUrl is empty
+        docMap.set(rDoc.id, {
+          ...rDoc,
+          fileDataUrl: rDoc.fileDataUrl || lDoc.fileDataUrl,
+          syncedWithCloud: true,
+        });
+        remoteDocsAddedOrUpdated++;
+      }
+      localDocMap.delete(rDoc.id);
+    } else {
+      // Remote doc newly received
+      docMap.set(rDoc.id, rDoc);
+      remoteDocsAddedOrUpdated++;
+    }
   }
+
+  // 3b. Process remaining Local Documents
+  for (const [id, lDoc] of localDocMap.entries()) {
+    if (deletedDocIds.has(id)) {
+      deletedDocsToSync.push(id);
+      continue;
+    }
+
+    // If orphaned (student no longer exists), do NOT keep it!
+    if (deletedIds.has(lDoc.studentId) || !mergedMap.has(lDoc.studentId)) {
+      recordDeletedDocId(id);
+      deletedDocsToSync.push(id);
+      continue;
+    }
+
+    // If document was already confirmed synced in the past but remote now missing it, it was deleted on cloud
+    if (lDoc.syncedWithCloud === true && remoteDocs.length > 0) {
+      recordDeletedDocId(id);
+      continue;
+    }
+
+    // Otherwise, local document was newly added or modified: KEEP IT AND PUSH TO CLOUD!
+    docMap.set(id, lDoc);
+    docsToPush.push(lDoc);
+    localDocsAddedOrUpdated++;
+  }
+
+  const finalDocs = Array.from(docMap.values());
+  localStorage.setItem(STORAGE_KEYS.DOCUMENTS, JSON.stringify(finalDocs));
 
   // 4. Merge Academic Years
   if (data.academicYears && Array.isArray(data.academicYears) && data.academicYears.length > 0) {
@@ -1116,8 +1258,12 @@ export function smartMergeRemoteData(data: {
     mergedStudents: finalStudents,
     studentsToPush,
     deletedToSync,
+    docsToPush,
+    deletedDocsToSync,
     localStudentsAddedOrUpdated,
     remoteStudentsAddedOrUpdated,
+    localDocsAddedOrUpdated,
+    remoteDocsAddedOrUpdated,
   };
 }
 

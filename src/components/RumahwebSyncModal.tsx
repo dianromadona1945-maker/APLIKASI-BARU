@@ -30,6 +30,7 @@ import {
   pullAllDataFromHosting,
   executeTwoWaySync,
   generatePhpApiScript,
+  purgeOrphanDocumentsOnHosting,
   RumahwebSyncConfig,
 } from '../services/mysqlSync';
 import { applyRemoteSyncedData } from '../services/storage';
@@ -215,6 +216,28 @@ export const RumahwebSyncModal: React.FC<RumahwebSyncModalProps> = ({
     if (res.success) {
       onDataSynced();
       setConfig(getSyncConfig());
+      setStatusMessage({ text: res.message });
+      onToast(res.message, 'success');
+    } else {
+      setStatusMessage({ text: res.message, isError: true });
+      onToast(res.message, 'error');
+    }
+  };
+
+  // Handle Clean Ghost/Orphan Documents
+  const handleCleanOrphans = async () => {
+    if (!config.apiUrl) {
+      setActiveTab('config');
+      setStatusMessage({ text: 'Harap atur URL API Rumahweb terlebih dahulu.', isError: true });
+      return;
+    }
+    setStatusMessage({ text: 'Sedang membersihkan dokumen yatim/hantu di database MySQL...' });
+    const res = await purgeOrphanDocumentsOnHosting();
+    if (res.success) {
+      const checkRes = await testRumahwebConnection(config.apiUrl, config.syncKey);
+      if (checkRes.success) {
+        setConfig(getSyncConfig());
+      }
       setStatusMessage({ text: res.message });
       onToast(res.message, 'success');
     } else {
@@ -426,7 +449,7 @@ export const RumahwebSyncModal: React.FC<RumahwebSyncModalProps> = ({
                   </div>
                   <div className="text-2xl font-black text-indigo-950">
                     {config.serverCounts?.students !== undefined
-                      ? `${config.serverCounts.students} Siswa`
+                      ? `${config.serverCounts.students} Siswa & ${config.serverCounts.documents ?? 0} Dokumen`
                       : isConnected
                       ? 'Tersambung'
                       : '-'}
@@ -436,6 +459,29 @@ export const RumahwebSyncModal: React.FC<RumahwebSyncModalProps> = ({
                   </p>
                 </div>
               </div>
+
+              {/* Ghost Documents / Orphan Alert & Cleaner */}
+              {config.serverCounts?.documents !== undefined && config.serverCounts.documents > 0 && documents.length === 0 && (
+                <div className="p-4 rounded-2xl bg-amber-50 border border-amber-300 flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                    <div className="text-xs space-y-1">
+                      <p className="font-bold text-amber-900">
+                        Terdeteksi {config.serverCounts.documents} Dokumen Yatim/Hantu di Server Cloud
+                      </p>
+                      <p className="text-amber-800 leading-relaxed">
+                        Database cloud mendeteksi berkas dokumen dari data sampel lama yang siswanya sudah Anda hapus. Klik tombol di sebelah kanan untuk membersihkan seluruh dokumen yatim ini agar sinkron dan bersih 0 dokumen.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleCleanOrphans}
+                    className="shrink-0 px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl text-xs transition cursor-pointer"
+                  >
+                    Bersihkan Dokumen Hantu
+                  </button>
+                </div>
+              )}
 
               {/* Discrepancy notice if local count differs from cloud server count */}
               {config.serverCounts?.students !== undefined && config.serverCounts.students !== students.length && (
@@ -447,8 +493,8 @@ export const RumahwebSyncModal: React.FC<RumahwebSyncModalProps> = ({
                     </p>
                     <p className="text-amber-800 leading-relaxed">
                       {students.length < config.serverCounts.students
-                        ? `Ada ${config.serverCounts.students - students.length} siswa yang sudah Anda hapus di komputer ini tetapi masih tersimpan di cloud. Klik "Kirim ke Hosting (Push)" di bawah untuk menyelaraskan cloud dan menghapus siswa tersebut dari server juga. Jangan klik "Tarik Data (Pull)" karena akan memunculkan kembali siswa yang sudah dihapus!`
-                        : `Ada ${students.length - config.serverCounts.students} siswa baru di komputer ini yang belum ada di cloud. Klik "Kirim ke Hosting (Push)" untuk mengunggahnya.`}
+                        ? `Ada ${config.serverCounts.students - students.length} siswa yang sudah Anda hapus di komputer ini tetapi masih tersimpan di cloud. Gunakan "Live Sync Cerdas 2-Arah (Smart Merge)" di bawah untuk menyelaraskan kedua sisi secara otomatis tanpa kehilangan data baru.`
+                        : `Ada ${students.length - config.serverCounts.students} siswa baru di komputer ini yang belum ada di cloud. Jalankan "Live Sync Cerdas 2-Arah" untuk mengunggahnya secara aman.`}
                     </p>
                   </div>
                 </div>

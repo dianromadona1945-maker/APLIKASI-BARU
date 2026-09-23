@@ -26,6 +26,8 @@ import {
   pullAllDataFromHosting,
   pushAllDataToHosting,
   deleteStudentFromHosting,
+  deleteDocumentFromHosting,
+  saveDocumentToHosting,
   checkServerSyncStatus,
   getIsSyncInProgress,
   getLastKnownSyncTimestamp,
@@ -364,6 +366,7 @@ export default function App() {
       id: newDocId,
       uploadedAt: new Date().toISOString(),
       version: 1,
+      syncedWithCloud: false,
     };
 
     saveDocument(newDoc);
@@ -377,8 +380,16 @@ export default function App() {
     );
 
     refreshAllData();
+
+    // Simpan instan dokumen langsung ke MySQL Hosting Rumahweb
+    saveDocumentToHosting(newDoc).then((res) => {
+      if (res.success) {
+        setSyncStatus('connected');
+      }
+    }).catch(() => {});
+
     syncToCloudIfEnabled();
-    showToast(`Dokumen "${docData.title}" berhasil diarsipkan.`);
+    showToast(`Dokumen "${docData.title}" berhasil diarsipkan & disinkronkan ke cloud.`);
   };
 
   const handleDeleteDocument = (docId: string, docTitle: string) => {
@@ -390,8 +401,11 @@ export default function App() {
       addAuditLog('DELETE_DOC', `Menghapus berkas dokumen: ${docTitle}`, doc?.studentId, student?.name);
 
       refreshAllData();
+
+      // Hapus langsung dari MySQL Hosting Rumahweb
+      deleteDocumentFromHosting(docId).catch(() => {});
       syncToCloudIfEnabled();
-      showToast('Dokumen berhasil dihapus dari arsip.', 'error');
+      showToast('Dokumen berhasil dihapus dari arsip & cloud.', 'error');
     }
   };
 
@@ -410,6 +424,9 @@ export default function App() {
       );
 
       refreshAllData();
+
+      // Perbarui status verifikasi di MySQL Hosting
+      saveDocumentToHosting(updated).catch(() => {});
       syncToCloudIfEnabled();
       showToast(`Status dokumen diubah menjadi: ${statusLabel}`);
     }

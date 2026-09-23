@@ -42,6 +42,7 @@ export interface StudentDocument {
   verificationStatus: VerificationStatus;
   notes?: string;
   version: number;
+  syncedWithCloud?: boolean;
 }
 
 export type InstitutionLevel = 'SD' | 'SMP' | 'SMK';

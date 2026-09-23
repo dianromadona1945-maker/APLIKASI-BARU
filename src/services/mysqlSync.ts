@@ -5,7 +5,9 @@ import {
   getDocuments,
   getAcademicYears,
   getDeletedStudentIds,
+  getDeletedDocIds,
   markStudentsAsSynced,
+  markDocumentsAsSynced,
 } from './storage';
 
 export interface RumahwebSyncConfig {
@@ -332,12 +334,175 @@ export async function pushStudentsToHosting(students: Student[]): Promise<{ succ
   }
 }
 
+export async function deleteDocumentFromHosting(docId: string): Promise<{ success: boolean; message: string }> {
+  const config = getSyncConfig();
+  if (!config.apiUrl) {
+    return { success: false, message: 'URL API belum dikonfigurasi' };
+  }
+  try {
+    const url = new URL(config.apiUrl);
+    url.searchParams.set('action', 'delete_document');
+    const response = await fetch(url.toString(), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Sync-Key': config.syncKey.trim(),
+      },
+      body: JSON.stringify({
+        key: config.syncKey.trim(),
+        docId,
+      }),
+    });
+    const result = await response.json();
+    return {
+      success: !!result.success,
+      message: result.message || 'Dokumen berhasil dihapus dari cloud',
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      message: `Gagal menghapus dokumen dari cloud: ${err.message || String(err)}`,
+    };
+  }
+}
+
+export async function saveDocumentToHosting(doc: StudentDocument): Promise<{ success: boolean; message: string }> {
+  const config = getSyncConfig();
+  if (!config.apiUrl) {
+    return { success: false, message: 'URL API belum dikonfigurasi' };
+  }
+  try {
+    const url = new URL(config.apiUrl);
+    url.searchParams.set('action', 'save_document');
+    const response = await fetch(url.toString(), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Sync-Key': config.syncKey.trim(),
+      },
+      body: JSON.stringify({
+        key: config.syncKey.trim(),
+        document: doc,
+      }),
+    });
+
+    if (!response.ok) {
+      return await pushDocumentsToHosting([doc]);
+    }
+
+    const data = await response.json();
+    if (data.success) {
+      markDocumentsAsSynced([doc.id]);
+      return { success: true, message: data.message || `Dokumen ${doc.title} tersimpan di cloud` };
+    } else {
+      return await pushDocumentsToHosting([doc]);
+    }
+  } catch {
+    try {
+      return await pushDocumentsToHosting([doc]);
+    } catch (fallbackErr: any) {
+      return { success: false, message: fallbackErr.message || String(fallbackErr) };
+    }
+  }
+}
+
+export async function pushDocumentsToHosting(documents: StudentDocument[]): Promise<{ success: boolean; message: string }> {
+  const config = getSyncConfig();
+  if (!config.apiUrl) {
+    return { success: false, message: 'URL API belum dikonfigurasi' };
+  }
+  if (documents.length === 0) {
+    return { success: true, message: 'Tidak ada dokumen untuk dikirim' };
+  }
+  try {
+    const url = new URL(config.apiUrl);
+    url.searchParams.set('action', 'push_documents');
+    const response = await fetch(url.toString(), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Sync-Key': config.syncKey.trim(),
+      },
+      body: JSON.stringify({
+        key: config.syncKey.trim(),
+        documents,
+      }),
+    });
+
+    if (!response.ok) {
+      // Fallback to push_all
+      const fallbackUrl = new URL(config.apiUrl);
+      fallbackUrl.searchParams.set('action', 'push_all');
+      const fallbackRes = await fetch(fallbackUrl.toString(), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Sync-Key': config.syncKey.trim(),
+        },
+        body: JSON.stringify({
+          key: config.syncKey.trim(),
+          students: [],
+          documents,
+          academicYears: [],
+          mirror: false,
+        }),
+      });
+      if (!fallbackRes.ok) throw new Error(`HTTP ${fallbackRes.status}`);
+      const fbData = await fallbackRes.json();
+      if (fbData.success) {
+        markDocumentsAsSynced(documents.map((d) => d.id));
+        return { success: true, message: fbData.message || `${documents.length} dokumen tersimpan di cloud` };
+      }
+      return { success: false, message: fbData.error || fbData.message || 'Gagal menyimpan dokumen' };
+    }
+
+    const data = await response.json();
+    if (data.success) {
+      markDocumentsAsSynced(documents.map((d) => d.id));
+      return { success: true, message: data.message || `${documents.length} dokumen tersimpan di cloud` };
+    }
+    return { success: false, message: data.error || data.message || 'Gagal menyimpan dokumen' };
+  } catch (err: any) {
+    return { success: false, message: `Gagal mengirim dokumen ke cloud: ${err.message || String(err)}` };
+  }
+}
+
+export async function purgeOrphanDocumentsOnHosting(): Promise<{ success: boolean; message: string; deletedCount?: number }> {
+  const config = getSyncConfig();
+  if (!config.apiUrl) {
+    return { success: false, message: 'URL API belum dikonfigurasi' };
+  }
+  try {
+    const url = new URL(config.apiUrl);
+    url.searchParams.set('action', 'clean_orphans');
+    const response = await fetch(url.toString(), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Sync-Key': config.syncKey.trim(),
+      },
+      body: JSON.stringify({ key: config.syncKey.trim() }),
+    });
+    const data = await response.json();
+    return {
+      success: !!data.success,
+      message: data.message || 'Pembersihan dokumen yatim selesai.',
+      deletedCount: data.deleted_count ?? 0,
+    };
+  } catch (err: any) {
+    return { success: false, message: `Gagal membersihkan dokumen yatim: ${err.message || String(err)}` };
+  }
+}
+
 export async function executeTwoWaySync(): Promise<{
   success: boolean;
   message: string;
   pushedCount: number;
   pulledCount: number;
   totalStudents: number;
+  pushedDocsCount?: number;
+  pulledDocsCount?: number;
+  totalDocs?: number;
 }> {
   const config = getSyncConfig();
   if (!config.apiUrl) {
@@ -347,6 +512,7 @@ export async function executeTwoWaySync(): Promise<{
       pushedCount: 0,
       pulledCount: 0,
       totalStudents: getStudents().length,
+      totalDocs: getDocuments().length,
     };
   }
 
@@ -357,11 +523,12 @@ export async function executeTwoWaySync(): Promise<{
       pushedCount: 0,
       pulledCount: 0,
       totalStudents: getStudents().length,
+      totalDocs: getDocuments().length,
     };
   }
 
   isSyncInProgress = true;
-  saveSyncConfig({ lastSyncStatus: 'syncing', lastSyncMessage: 'Sedang melakukan sinkronisasi dua arah (Smart Merge)...' });
+  saveSyncConfig({ lastSyncStatus: 'syncing', lastSyncMessage: 'Sedang melakukan sinkronisasi dua arah siswa dan dokumen...' });
 
   try {
     // 1. Pull data from server
@@ -385,17 +552,22 @@ export async function executeTwoWaySync(): Promise<{
       throw new Error(pullResult.error || pullResult.message || 'Gagal membaca data dari cloud');
     }
 
-    // 2. Perform safe Bidirectional Smart Merge locally (never loses newly added students!)
+    // 2. Perform safe Bidirectional Smart Merge locally (never loses newly added students or docs!)
     const mergeResult = smartMergeRemoteData(pullResult.data);
 
-    // 3. Delete any records on cloud that were marked deleted locally
+    // 3. Delete any student & document records on cloud that were marked deleted locally
     if (mergeResult.deletedToSync && mergeResult.deletedToSync.length > 0) {
       for (const delId of mergeResult.deletedToSync) {
         deleteStudentFromHosting(delId).catch(() => {});
       }
     }
+    if (mergeResult.deletedDocsToSync && mergeResult.deletedDocsToSync.length > 0) {
+      for (const delDocId of mergeResult.deletedDocsToSync) {
+        deleteDocumentFromHosting(delDocId).catch(() => {});
+      }
+    }
 
-    // 4. Push local additions/updates to cloud
+    // 4. Push local student additions/updates to cloud
     let pushedCount = 0;
     if (mergeResult.studentsToPush && mergeResult.studentsToPush.length > 0) {
       const pushRes = await pushStudentsToHosting(mergeResult.studentsToPush);
@@ -405,16 +577,28 @@ export async function executeTwoWaySync(): Promise<{
       }
     }
 
+    // 5. Push local document additions/updates to cloud
+    let pushedDocsCount = 0;
+    if (mergeResult.docsToPush && mergeResult.docsToPush.length > 0) {
+      const pushDocRes = await pushDocumentsToHosting(mergeResult.docsToPush);
+      if (pushDocRes.success) {
+        pushedDocsCount = mergeResult.docsToPush.length;
+        markDocumentsAsSynced(mergeResult.docsToPush.map((d) => d.id));
+      }
+    }
+
     const now = new Date().toISOString();
     saveLastKnownSyncTimestamp(now);
-    const msg = `Sinkronisasi aman: ${mergeResult.mergedStudents.length} siswa diselaraskan (${pushedCount} dikirim, ${mergeResult.remoteStudentsAddedOrUpdated} baru ditarik)`;
+    const finalDocsList = getDocuments();
+    const msg = `Sinkronisasi Live sukses: ${mergeResult.mergedStudents.length} siswa (${pushedCount} dikirim, ${mergeResult.remoteStudentsAddedOrUpdated} ditarik), ${finalDocsList.length} dokumen (${pushedDocsCount} dikirim, ${mergeResult.remoteDocsAddedOrUpdated} ditarik)`;
+    
     saveSyncConfig({
       lastSyncStatus: 'success',
       lastSyncTime: now,
       lastSyncMessage: msg,
       serverCounts: {
         students: mergeResult.mergedStudents.length,
-        documents: getDocuments().length,
+        documents: finalDocsList.length,
         academicYears: getAcademicYears().length,
       },
     });
@@ -425,6 +609,9 @@ export async function executeTwoWaySync(): Promise<{
       pushedCount,
       pulledCount: mergeResult.remoteStudentsAddedOrUpdated,
       totalStudents: mergeResult.mergedStudents.length,
+      pushedDocsCount,
+      pulledDocsCount: mergeResult.remoteDocsAddedOrUpdated,
+      totalDocs: finalDocsList.length,
     };
   } catch (err: any) {
     const errMsg = `Gagal sinkronisasi: ${err.message || String(err)}`;
@@ -438,6 +625,7 @@ export async function executeTwoWaySync(): Promise<{
       pushedCount: 0,
       pulledCount: 0,
       totalStudents: getStudents().length,
+      totalDocs: getDocuments().length,
     };
   } finally {
     isSyncInProgress = false;
@@ -718,6 +906,22 @@ switch ($action) {
         handlePushStudents($pdo, $body);
         break;
 
+    case 'save_document':
+        handleSaveDocument($pdo, $body);
+        break;
+
+    case 'push_documents':
+        handlePushDocuments($pdo, $body);
+        break;
+
+    case 'delete_document':
+        handleDeleteDocument($pdo, $body);
+        break;
+
+    case 'clean_orphans':
+        handleCleanOrphans($pdo);
+        break;
+
     case 'push_all':
         handlePushAll($pdo, $body);
         break;
@@ -776,13 +980,24 @@ function initDatabaseTables($pdo) {
         \`file_name\` VARCHAR(255) DEFAULT NULL,
         \`file_size\` VARCHAR(50) DEFAULT NULL,
         \`upload_date\` VARCHAR(50) DEFAULT NULL,
-        \`status\` VARCHAR(50) DEFAULT 'Belum Diverifikasi',
+        \`status\` VARCHAR(50) DEFAULT 'unverified',
         \`verified_by\` VARCHAR(100) DEFAULT NULL,
         \`verified_at\` VARCHAR(50) DEFAULT NULL,
         \`notes\` TEXT DEFAULT NULL,
         \`file_data\` LONGTEXT DEFAULT NULL,
+        \`raw_json\` LONGTEXT DEFAULT NULL,
         INDEX idx_student (\`student_id\`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;");
+
+    // Pastikan kolom raw_json tersedia di tabel dokumen
+    try {
+        $pdo->exec("ALTER TABLE \`arsip_documents\` ADD COLUMN \`raw_json\` LONGTEXT DEFAULT NULL");
+    } catch (Exception $e) {}
+
+    // Otomatis bersihkan dokumen yatim (dokumen siswa lama/demo yang sudah dihapus)
+    try {
+        $pdo->exec("DELETE FROM \`arsip_documents\` WHERE \`student_id\` NOT IN (SELECT \`id\` FROM \`arsip_students\`)");
+    } catch (Exception $e) {}
 
     // Tabel Pengaturan Tahun Pelajaran
     $pdo->exec("CREATE TABLE IF NOT EXISTS \`arsip_academic_years\` (
@@ -802,6 +1017,11 @@ function initDatabaseTables($pdo) {
 }
 
 function handleTest($pdo) {
+    // Bersihkan orphan docs
+    try {
+        $pdo->exec("DELETE FROM \`arsip_documents\` WHERE \`student_id\` NOT IN (SELECT \`id\` FROM \`arsip_students\`)");
+    } catch (Exception $e) {}
+
     $stmt1 = $pdo->query("SELECT COUNT(*) AS total FROM \`arsip_students\`");
     $totalStudents = (int)$stmt1->fetchColumn();
 
@@ -821,6 +1041,149 @@ function handleTest($pdo) {
             'academicYears' => $totalYears
         ]
     ]);
+}
+
+function handleCleanOrphans($pdo) {
+    try {
+        $countStmt = $pdo->query("SELECT COUNT(*) FROM \`arsip_documents\` WHERE \`student_id\` NOT IN (SELECT \`id\` FROM \`arsip_students\`)");
+        $orphanCount = (int)$countStmt->fetchColumn();
+
+        $delStmt = $pdo->exec("DELETE FROM \`arsip_documents\` WHERE \`student_id\` NOT IN (SELECT \`id\` FROM \`arsip_students\`)");
+
+        echo json_encode([
+            'success' => true,
+            'message' => "Berhasil membersihkan {$orphanCount} dokumen yatim.",
+            'deleted_count' => $orphanCount
+        ]);
+    } catch (Exception $e) {
+        http_response_code(500);
+        echo json_encode(['success' => false, 'error' => 'Gagal membersihkan dokumen yatim: ' . $e->getMessage()]);
+    }
+}
+
+function handleSaveDocument($pdo, $body) {
+    $doc = isset($body['document']) && is_array($body['document']) ? $body['document'] : null;
+    if (!$doc || empty($doc['id']) || empty($doc['studentId'])) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'error' => 'Data dokumen tidak valid atau ID / Student ID kosong']);
+        return;
+    }
+
+    try {
+        $stmt = $pdo->prepare("INSERT INTO \`arsip_documents\` (
+            \`id\`, \`student_id\`, \`type\`, \`file_name\`, \`file_size\`, \`upload_date\`,
+            \`status\`, \`verified_by\`, \`verified_at\`, \`notes\`, \`file_data\`, \`raw_json\`
+        ) VALUES (
+            :id, :student_id, :type, :file_name, :file_size, :upload_date,
+            :status, :verified_by, :verified_at, :notes, :file_data, :raw_json
+        ) ON DUPLICATE KEY UPDATE
+            \`type\` = VALUES(\`type\`),
+            \`file_name\` = VALUES(\`file_name\`),
+            \`file_size\` = VALUES(\`file_size\`),
+            \`upload_date\` = VALUES(\`upload_date\`),
+            \`status\` = VALUES(\`status\`),
+            \`verified_by\` = VALUES(\`verified_by\`),
+            \`verified_at\` = VALUES(\`verified_at\`),
+            \`notes\` = VALUES(\`notes\`),
+            \`file_data\` = VALUES(\`file_data\`),
+            \`raw_json\` = VALUES(\`raw_json\`)");
+
+        $stmt->execute([
+            ':id' => $doc['id'],
+            ':student_id' => $doc['studentId'],
+            ':type' => $doc['docType'] ?? ($doc['type'] ?? 'lainnya'),
+            ':file_name' => $doc['fileName'] ?? ($doc['title'] ?? 'Dokumen'),
+            ':file_size' => (string)($doc['fileSize'] ?? '0'),
+            ':upload_date' => $doc['uploadedAt'] ?? ($doc['uploadDate'] ?? date('c')),
+            ':status' => $doc['verificationStatus'] ?? ($doc['status'] ?? 'unverified'),
+            ':verified_by' => $doc['uploadedBy'] ?? ($doc['verifiedBy'] ?? null),
+            ':verified_at' => $doc['verifiedAt'] ?? null,
+            ':notes' => $doc['notes'] ?? '',
+            ':file_data' => $doc['fileDataUrl'] ?? ($doc['fileData'] ?? null),
+            ':raw_json' => json_encode($doc),
+        ]);
+
+        echo json_encode([
+            'success' => true,
+            'message' => 'Dokumen ' . ($doc['title'] ?? '') . ' berhasil disimpan di MySQL cloud.',
+            'docId' => $doc['id']
+        ]);
+    } catch (Exception $e) {
+        http_response_code(500);
+        echo json_encode(['success' => false, 'error' => 'Gagal menyimpan dokumen: ' . $e->getMessage()]);
+    }
+}
+
+function handlePushDocuments($pdo, $body) {
+    $docs = isset($body['documents']) && is_array($body['documents']) ? $body['documents'] : [];
+    if (empty($docs)) {
+        echo json_encode(['success' => true, 'message' => 'Tidak ada dokumen yang dikirim', 'count' => 0]);
+        return;
+    }
+
+    $pdo->beginTransaction();
+    try {
+        $stmt = $pdo->prepare("INSERT INTO \`arsip_documents\` (
+            \`id\`, \`student_id\`, \`type\`, \`file_name\`, \`file_size\`, \`upload_date\`,
+            \`status\`, \`verified_by\`, \`verified_at\`, \`notes\`, \`file_data\`, \`raw_json\`
+        ) VALUES (
+            :id, :student_id, :type, :file_name, :file_size, :upload_date,
+            :status, :verified_by, :verified_at, :notes, :file_data, :raw_json
+        ) ON DUPLICATE KEY UPDATE
+            \`type\` = VALUES(\`type\`),
+            \`file_name\` = VALUES(\`file_name\`),
+            \`file_size\` = VALUES(\`file_size\`),
+            \`upload_date\` = VALUES(\`upload_date\`),
+            \`status\` = VALUES(\`status\`),
+            \`verified_by\` = VALUES(\`verified_by\`),
+            \`verified_at\` = VALUES(\`verified_at\`),
+            \`notes\` = VALUES(\`notes\`),
+            \`file_data\` = VALUES(\`file_data\`),
+            \`raw_json\` = VALUES(\`raw_json\`)");
+
+        foreach ($docs as $doc) {
+            if (empty($doc['id']) || empty($doc['studentId'])) continue;
+            $stmt->execute([
+                ':id' => $doc['id'],
+                ':student_id' => $doc['studentId'],
+                ':type' => $doc['docType'] ?? ($doc['type'] ?? 'lainnya'),
+                ':file_name' => $doc['fileName'] ?? ($doc['title'] ?? 'Dokumen'),
+                ':file_size' => (string)($doc['fileSize'] ?? '0'),
+                ':upload_date' => $doc['uploadedAt'] ?? ($doc['uploadDate'] ?? date('c')),
+                ':status' => $doc['verificationStatus'] ?? ($doc['status'] ?? 'unverified'),
+                ':verified_by' => $doc['uploadedBy'] ?? ($doc['verifiedBy'] ?? null),
+                ':verified_at' => $doc['verifiedAt'] ?? null,
+                ':notes' => $doc['notes'] ?? '',
+                ':file_data' => $doc['fileDataUrl'] ?? ($doc['fileData'] ?? null),
+                ':raw_json' => json_encode($doc),
+            ]);
+        }
+
+        $pdo->commit();
+        echo json_encode([
+            'success' => true,
+            'message' => 'Berhasil menyimpan ' . count($docs) . ' dokumen ke cloud.',
+            'count' => count($docs)
+        ]);
+    } catch (Exception $e) {
+        $pdo->rollBack();
+        http_response_code(500);
+        echo json_encode(['success' => false, 'error' => 'Gagal menyimpan dokumen batch: ' . $e->getMessage()]);
+    }
+}
+
+function handleDeleteDocument($pdo, $body) {
+    $docId = $body['docId'] ?? '';
+    if (!empty($docId)) {
+        $stmt = $pdo->prepare("DELETE FROM \`arsip_documents\` WHERE \`id\` = :id");
+        $stmt->execute([':id' => $docId]);
+        echo json_encode([
+            'success' => true,
+            'message' => 'Dokumen berhasil dihapus dari cloud MySQL.'
+        ]);
+    } else {
+        echo json_encode(['success' => false, 'error' => 'ID dokumen tidak boleh kosong.']);
+    }
 }
 
 function handleSaveStudent($pdo, $body) {
@@ -967,6 +1330,7 @@ function handlePushAll($pdo, $body) {
     $academicYears = isset($body['academicYears']) && is_array($body['academicYears']) ? $body['academicYears'] : [];
     $logs = isset($body['logs']) && is_array($body['logs']) ? $body['logs'] : [];
     $deletedIds = isset($body['deletedIds']) && is_array($body['deletedIds']) ? $body['deletedIds'] : [];
+    $deletedDocIds = isset($body['deletedDocIds']) && is_array($body['deletedDocIds']) ? $body['deletedDocIds'] : [];
     $mirror = isset($body['mirror']) ? (bool)$body['mirror'] : false;
 
     $pdo->beginTransaction();
@@ -985,64 +1349,81 @@ function handlePushAll($pdo, $body) {
             }
         }
 
-        // Upsert Siswa
-        $stmtStudent = $pdo->prepare("INSERT INTO \`arsip_students\` (
-            \`id\`, \`name\`, \`nis\`, \`nisn\`, \`nik\`, \`institution\`, \`academic_year\`, \`class_room\`,
-            \`birth_place\`, \`birth_date\`, \`gender\`, \`address\`, \`parent_name\`, \`parent_phone\`,
-            \`status\`, \`raw_json\`, \`created_at\`, \`updated_at\`
-        ) VALUES (
-            :id, :name, :nis, :nisn, :nik, :institution, :academic_year, :class_room,
-            :birth_place, :birth_date, :gender, :address, :parent_name, :parent_phone,
-            :status, :raw_json, :created_at, :updated_at
-        ) ON DUPLICATE KEY UPDATE
-            \`name\` = VALUES(\`name\`),
-            \`nis\` = VALUES(\`nis\`),
-            \`nisn\` = VALUES(\`nisn\`),
-            \`nik\` = VALUES(\`nik\`),
-            \`institution\` = VALUES(\`institution\`),
-            \`academic_year\` = VALUES(\`academic_year\`),
-            \`class_room\` = VALUES(\`class_room\`),
-            \`birth_place\` = VALUES(\`birth_place\`),
-            \`birth_date\` = VALUES(\`birth_date\`),
-            \`gender\` = VALUES(\`gender\`),
-            \`address\` = VALUES(\`address\`),
-            \`parent_name\` = VALUES(\`parent_name\`),
-            \`parent_phone\` = VALUES(\`parent_phone\`),
-            \`status\` = VALUES(\`status\`),
-            \`raw_json\` = VALUES(\`raw_json\`),
-            \`updated_at\` = VALUES(\`updated_at\`)");
+        // Hapus HANYA id dokumen yang secara eksplisit dihapus
+        if (!empty($deletedDocIds)) {
+            $validDelDocs = array_filter($deletedDocIds, function($id) { return !empty($id) && is_string($id); });
+            if (!empty($validDelDocs)) {
+                $delDocPlaceholders = implode(',', array_fill(0, count($validDelDocs), '?'));
+                $delSpecificDocStmt = $pdo->prepare("DELETE FROM \`arsip_documents\` WHERE \`id\` IN ($delDocPlaceholders)");
+                $delSpecificDocStmt->execute(array_values($validDelDocs));
+            }
+        }
 
-        foreach ($students as $s) {
-            $stmtStudent->execute([
-                ':id' => $s['id'],
-                ':name' => $s['name'] ?? '',
-                ':nis' => $s['nis'] ?? '',
-                ':nisn' => $s['nisn'] ?? '',
-                ':nik' => $s['nik'] ?? '',
-                ':institution' => $s['institution'] ?? 'SMP',
-                ':academic_year' => $s['academicYear'] ?? '',
-                ':class_room' => $s['classRoom'] ?? '',
-                ':birth_place' => $s['birthPlace'] ?? '',
-                ':birth_date' => $s['birthDate'] ?? '',
-                ':gender' => $s['gender'] ?? 'L',
-                ':address' => $s['address'] ?? '',
-                ':parent_name' => $s['parentName'] ?? '',
-                ':parent_phone' => $s['parentPhone'] ?? '',
-                ':status' => $s['status'] ?? 'Aktif',
-                ':raw_json' => json_encode($s),
-                ':created_at' => $s['createdAt'] ?? date('c'),
-                ':updated_at' => $s['updatedAt'] ?? date('c'),
-            ]);
+        // Bersihkan otomatis dokumen yatim
+        try {
+            $pdo->exec("DELETE FROM \`arsip_documents\` WHERE \`student_id\` NOT IN (SELECT \`id\` FROM \`arsip_students\`)");
+        } catch (Exception $e) {}
+
+        // Upsert Siswa
+        if (!empty($students)) {
+            $stmtStudent = $pdo->prepare("INSERT INTO \`arsip_students\` (
+                \`id\`, \`name\`, \`nis\`, \`nisn\`, \`nik\`, \`institution\`, \`academic_year\`, \`class_room\`,
+                \`birth_place\`, \`birth_date\`, \`gender\`, \`address\`, \`parent_name\`, \`parent_phone\`,
+                \`status\`, \`raw_json\`, \`created_at\`, \`updated_at\`
+            ) VALUES (
+                :id, :name, :nis, :nisn, :nik, :institution, :academic_year, :class_room,
+                :birth_place, :birth_date, :gender, :address, :parent_name, :parent_phone,
+                :status, :raw_json, :created_at, :updated_at
+            ) ON DUPLICATE KEY UPDATE
+                \`name\` = VALUES(\`name\`),
+                \`nis\` = VALUES(\`nis\`),
+                \`nisn\` = VALUES(\`nisn\`),
+                \`nik\` = VALUES(\`nik\`),
+                \`institution\` = VALUES(\`institution\`),
+                \`academic_year\` = VALUES(\`academic_year\`),
+                \`class_room\` = VALUES(\`class_room\`),
+                \`birth_place\` = VALUES(\`birth_place\`),
+                \`birth_date\` = VALUES(\`birth_date\`),
+                \`gender\` = VALUES(\`gender\`),
+                \`address\` = VALUES(\`address\`),
+                \`parent_name\` = VALUES(\`parent_name\`),
+                \`parent_phone\` = VALUES(\`parent_phone\`),
+                \`status\` = VALUES(\`status\`),
+                \`raw_json\` = VALUES(\`raw_json\`),
+                \`updated_at\` = VALUES(\`updated_at\`)");
+
+            foreach ($students as $s) {
+                $stmtStudent->execute([
+                    ':id' => $s['id'],
+                    ':name' => $s['name'] ?? '',
+                    ':nis' => $s['nis'] ?? '',
+                    ':nisn' => $s['nisn'] ?? '',
+                    ':nik' => $s['nik'] ?? '',
+                    ':institution' => $s['institution'] ?? 'SMP',
+                    ':academic_year' => $s['academicYear'] ?? '',
+                    ':class_room' => $s['classRoom'] ?? '',
+                    ':birth_place' => $s['birthPlace'] ?? '',
+                    ':birth_date' => $s['birthDate'] ?? '',
+                    ':gender' => $s['gender'] ?? 'L',
+                    ':address' => $s['address'] ?? '',
+                    ':parent_name' => $s['parentName'] ?? '',
+                    ':parent_phone' => $s['parentPhone'] ?? '',
+                    ':status' => $s['status'] ?? 'Aktif',
+                    ':raw_json' => json_encode($s),
+                    ':created_at' => $s['createdAt'] ?? date('c'),
+                    ':updated_at' => $s['updatedAt'] ?? date('c'),
+                ]);
+            }
         }
 
         // Upsert Dokumen
         if (!empty($documents)) {
             $stmtDoc = $pdo->prepare("INSERT INTO \`arsip_documents\` (
                 \`id\`, \`student_id\`, \`type\`, \`file_name\`, \`file_size\`, \`upload_date\`,
-                \`status\`, \`verified_by\`, \`verified_at\`, \`notes\`, \`file_data\`
+                \`status\`, \`verified_by\`, \`verified_at\`, \`notes\`, \`file_data\`, \`raw_json\`
             ) VALUES (
                 :id, :student_id, :type, :file_name, :file_size, :upload_date,
-                :status, :verified_by, :verified_at, :notes, :file_data
+                :status, :verified_by, :verified_at, :notes, :file_data, :raw_json
             ) ON DUPLICATE KEY UPDATE
                 \`type\` = VALUES(\`type\`),
                 \`file_name\` = VALUES(\`file_name\`),
@@ -1052,21 +1433,24 @@ function handlePushAll($pdo, $body) {
                 \`verified_by\` = VALUES(\`verified_by\`),
                 \`verified_at\` = VALUES(\`verified_at\`),
                 \`notes\` = VALUES(\`notes\`),
-                \`file_data\` = VALUES(\`file_data\`)");
+                \`file_data\` = VALUES(\`file_data\`),
+                \`raw_json\` = VALUES(\`raw_json\`)");
 
             foreach ($documents as $d) {
+                if (empty($d['id']) || empty($d['studentId'])) continue;
                 $stmtDoc->execute([
                     ':id' => $d['id'],
                     ':student_id' => $d['studentId'],
-                    ':type' => $d['type'] ?? 'KK',
-                    ':file_name' => $d['fileName'] ?? '',
-                    ':file_size' => $d['fileSize'] ?? '',
-                    ':upload_date' => $d['uploadDate'] ?? date('c'),
-                    ':status' => $d['status'] ?? 'Belum Diverifikasi',
-                    ':verified_by' => $d['verifiedBy'] ?? null,
+                    ':type' => $d['docType'] ?? ($d['type'] ?? 'lainnya'),
+                    ':file_name' => $d['fileName'] ?? ($d['title'] ?? 'Dokumen'),
+                    ':file_size' => (string)($d['fileSize'] ?? '0'),
+                    ':upload_date' => $d['uploadedAt'] ?? ($d['uploadDate'] ?? date('c')),
+                    ':status' => $d['verificationStatus'] ?? ($d['status'] ?? 'unverified'),
+                    ':verified_by' => $d['uploadedBy'] ?? ($d['verifiedBy'] ?? null),
                     ':verified_at' => $d['verifiedAt'] ?? null,
                     ':notes' => $d['notes'] ?? '',
-                    ':file_data' => $d['fileData'] ?? null,
+                    ':file_data' => $d['fileDataUrl'] ?? ($d['fileData'] ?? null),
+                    ':raw_json' => json_encode($d),
                 ]);
             }
         }
@@ -1102,6 +1486,11 @@ function handlePushAll($pdo, $body) {
 }
 
 function handlePullAll($pdo) {
+    // Bersihkan orphan docs terlebih dahulu
+    try {
+        $pdo->exec("DELETE FROM \`arsip_documents\` WHERE \`student_id\` NOT IN (SELECT \`id\` FROM \`arsip_students\`)");
+    } catch (Exception $e) {}
+
     // Ambil semua data siswa
     $stmt1 = $pdo->query("SELECT * FROM \`arsip_students\` ORDER BY \`institution\` ASC, \`name\` ASC");
     $rawStudents = $stmt1->fetchAll();
@@ -1141,18 +1530,36 @@ function handlePullAll($pdo) {
     $rawDocs = $stmt2->fetchAll();
     $documents = [];
     foreach ($rawDocs as $d) {
+        if (!empty($d['raw_json'])) {
+            $decoded = json_decode($d['raw_json'], true);
+            if (is_array($decoded)) {
+                $documents[] = $decoded;
+                continue;
+            }
+        }
+        $vStatus = 'pending';
+        if (in_array($d['status'], ['verified', 'pending', 'revision', 'unverified'])) {
+            $vStatus = $d['status'];
+        } elseif ($d['status'] === 'Terverifikasi') {
+            $vStatus = 'verified';
+        } elseif ($d['status'] === 'Perlu Revisi') {
+            $vStatus = 'revision';
+        }
+
         $documents[] = [
             'id' => $d['id'],
             'studentId' => $d['student_id'],
-            'type' => $d['type'],
-            'fileName' => $d['file_name'] ?? '',
-            'fileSize' => $d['file_size'] ?? '',
-            'uploadDate' => $d['upload_date'] ?? '',
-            'status' => $d['status'] ?? 'Belum Diverifikasi',
-            'verifiedBy' => $d['verified_by'] ?? null,
-            'verifiedAt' => $d['verified_at'] ?? null,
+            'docType' => strtolower($d['type']),
+            'title' => $d['file_name'] ?? 'Dokumen Siswa',
+            'fileName' => $d['file_name'] ?? 'dokumen.pdf',
+            'fileType' => 'application/pdf',
+            'fileSize' => (int)($d['file_size'] ?? 0),
+            'fileDataUrl' => $d['file_data'] ?? '',
+            'uploadedAt' => $d['upload_date'] ?? date('c'),
+            'uploadedBy' => $d['verified_by'] ?? 'Petugas TU',
+            'verificationStatus' => $vStatus,
             'notes' => $d['notes'] ?? '',
-            'fileData' => $d['file_data'] ?? null,
+            'version' => 1,
         ];
     }
 
@@ -1171,6 +1578,10 @@ function handlePullAll($pdo) {
 }
 
 function handleCheckSync($pdo) {
+    try {
+        $pdo->exec("DELETE FROM \`arsip_documents\` WHERE \`student_id\` NOT IN (SELECT \`id\` FROM \`arsip_students\`)");
+    } catch (Exception $e) {}
+
     $stmt1 = $pdo->query("SELECT COUNT(*) AS total, MAX(\`updated_at\`) AS last_updated FROM \`arsip_students\`");
     $sInfo = $stmt1->fetch();
 
