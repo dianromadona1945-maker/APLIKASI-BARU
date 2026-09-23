@@ -80,21 +80,9 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
           <div>
             <div className="flex items-center gap-2">
               <h3 className="font-extrabold text-sm sm:text-base text-white">{document.title}</h3>
-              {isVerified && (
-                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                  Terverifikasi Sah
-                </span>
-              )}
-              {isPending && (
-                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                  Menunggu Verifikasi
-                </span>
-              )}
-              {isRevision && (
-                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">
-                  Perlu Revisi
-                </span>
-              )}
+              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                Terarsip
+              </span>
             </div>
             <p className="text-xs text-slate-400 font-mono">
               {document.fileName} • {student ? `${student.name} (${student.classRoom})` : ''}
@@ -252,29 +240,6 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
                       <span className="text-slate-400">Kelas:</span>
                       <span className="text-slate-200">{student.classRoom}</span>
                     </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Quick verification buttons for authorized users */}
-              {onVerify && currentUserRole !== 'petugas_tu' && (
-                <div>
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">Ubah Status Verifikasi</h4>
-                  <div className="mt-2.5 grid grid-cols-2 gap-2">
-                    <button
-                      onClick={() => onVerify(document.id, 'verified', 'Dokumen diverifikasi sah.')}
-                      className="py-2 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition flex items-center justify-center gap-1"
-                    >
-                      <CheckCircle2 className="w-3.5 h-3.5" />
-                      <span>Setuju (Sah)</span>
-                    </button>
-                    <button
-                      onClick={() => onVerify(document.id, 'revision', 'Berkas buram atau tidak sesuai.')}
-                      className="py-2 px-3 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold transition flex items-center justify-center gap-1"
-                    >
-                      <AlertTriangle className="w-3.5 h-3.5" />
-                      <span>Minta Revisi</span>
-                    </button>
                   </div>
                 </div>
               )}

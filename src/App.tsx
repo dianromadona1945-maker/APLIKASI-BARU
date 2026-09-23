@@ -32,6 +32,8 @@ import {
   getIsSyncInProgress,
   getLastKnownSyncTimestamp,
   saveLastKnownSyncTimestamp,
+  getLastKnownDocSyncTimestamp,
+  saveLastKnownDocSyncTimestamp,
   saveStudentToHosting,
   pushStudentsToHosting,
   executeTwoWaySync,
@@ -110,13 +112,57 @@ export default function App() {
   };
 
   const refreshAllData = () => {
-    setStudents(getStudents());
-    setDocuments(getDocuments());
+    const freshStudents = getStudents();
+    const freshDocs = getDocuments();
+    setStudents(freshStudents);
+    setDocuments(freshDocs);
     setLogs(getLogs());
     setUsers(getUsers());
     setCurrentUserState(getCurrentUser());
     setAcademicYears(getAcademicYears());
+
+    setSelectedStudentForDossier((prev) => {
+      if (!prev) return null;
+      return freshStudents.find((s) => s.id === prev.id) || prev;
+    });
   };
+
+  const broadcastLocalChange = () => {
+    try {
+      if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+        const bc = new BroadcastChannel('arsip_attafaqquh_sync');
+        bc.postMessage('REFRESH');
+        bc.close();
+      }
+    } catch {}
+  };
+
+  // Instant multi-tab / multi-window synchronization
+  useEffect(() => {
+    let bc: BroadcastChannel | null = null;
+    try {
+      if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+        bc = new BroadcastChannel('arsip_attafaqquh_sync');
+        bc.onmessage = (ev) => {
+          if (ev.data === 'REFRESH') {
+            refreshAllData();
+          }
+        };
+      }
+    } catch {}
+
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key?.startsWith('arsip_sekolah_') || e.key?.startsWith('arsip_rumahweb_')) {
+        refreshAllData();
+      }
+    };
+    window.addEventListener('storage', handleStorage);
+
+    return () => {
+      if (bc) bc.close();
+      window.removeEventListener('storage', handleStorage);
+    };
+  }, []);
 
   // Live Auto-Sync Status
   const [isLiveSyncing, setIsLiveSyncing] = useState(false);
@@ -125,14 +171,21 @@ export default function App() {
     return config.apiUrl ? 'connected' : 'idle';
   });
 
-  // Background sync helper: performs bidirectional smart merge
+  // Background sync helper: performs bidirectional smart merge for students and documents
   const syncToCloudIfEnabled = () => {
     const config = getSyncConfig();
     if (config.apiUrl && config.autoSync) {
       executeTwoWaySync()
         .then((res) => {
-          if (res.success && (res.pushedCount > 0 || res.pulledCount > 0)) {
+          if (
+            res.success &&
+            ((res.pushedCount ?? 0) > 0 ||
+              (res.pulledCount ?? 0) > 0 ||
+              (res.pushedDocsCount ?? 0) > 0 ||
+              (res.pulledDocsCount ?? 0) > 0)
+          ) {
             refreshAllData();
+            broadcastLocalChange();
           }
         })
         .catch((e) => console.warn('Auto cloud sync failed:', e));
@@ -148,6 +201,7 @@ export default function App() {
       const res = await executeTwoWaySync();
       if (res.success) {
         refreshAllData();
+        broadcastLocalChange();
         setSyncStatus('connected');
         showToast(res.message, 'success');
       } else {
@@ -188,22 +242,31 @@ export default function App() {
         const currentStudents = getStudents();
         const currentDocs = getDocuments();
         const lastKnownUpdate = getLastKnownSyncTimestamp();
+        const lastKnownDocUpdate = getLastKnownDocSyncTimestamp();
 
         let shouldSync = false;
 
         if (check.success && check.counts) {
-          const countDiffers =
-            check.counts.students !== currentStudents.length ||
-            check.counts.documents !== currentDocs.length;
+          const studentCountDiffers = check.counts.students !== currentStudents.length;
+          const docCountDiffers = check.counts.documents !== currentDocs.length;
 
-          const timestampDiffers =
+          const studentTimestampDiffers =
             Boolean(check.lastStudentUpdate) &&
             check.lastStudentUpdate !== lastKnownUpdate;
+
+          const docTimestampDiffers =
+            Boolean(check.lastDocUpdate) &&
+            check.lastDocUpdate !== lastKnownDocUpdate;
 
           const isFreshLocalSeed =
             currentStudents.length <= 6 && check.counts.students > 6;
 
-          shouldSync = countDiffers || timestampDiffers || isFreshLocalSeed;
+          shouldSync =
+            studentCountDiffers ||
+            docCountDiffers ||
+            studentTimestampDiffers ||
+            docTimestampDiffers ||
+            isFreshLocalSeed;
         } else if (!isBackground) {
           shouldSync = true;
         }
@@ -216,16 +279,27 @@ export default function App() {
 
           if (res.success) {
             refreshAllData();
+            broadcastLocalChange();
             setSyncStatus('connected');
+
+            // Store server timestamps to avoid re-pulling if nothing changed
+            if (check.lastStudentUpdate) saveLastKnownSyncTimestamp(check.lastStudentUpdate);
+            if (check.lastDocUpdate) saveLastKnownDocSyncTimestamp(check.lastDocUpdate);
+
+            const hasNewStudents = (res.pulledCount ?? 0) > 0;
+            const hasNewDocs = (res.pulledDocsCount ?? 0) > 0;
 
             if (!isBackground) {
               showToast(
-                `Cloud MySQL: Terhubung & menyelaraskan ${res.totalStudents} siswa (${res.pushedCount} dikirim, ${res.pulledCount} ditarik).`,
+                `Cloud MySQL: Terhubung & menyelaraskan ${res.totalStudents} siswa, ${res.totalDocs ?? currentDocs.length} berkas (${res.pushedCount} siswa, ${res.pushedDocsCount ?? 0} berkas dikirim).`,
                 'success'
               );
-            } else if (res.pushedCount > 0 || res.pulledCount > 0) {
+            } else if (hasNewStudents || hasNewDocs) {
+              const parts = [];
+              if (hasNewStudents) parts.push(`${res.pulledCount} data siswa`);
+              if (hasNewDocs) parts.push(`${res.pulledDocsCount} berkas/dokumen`);
               showToast(
-                `Data otomatis tersinkronisasi: ${res.totalStudents} total siswa (${res.pulledCount} data baru ditarik).`,
+                `⚡ Live Sync: ${parts.join(' & ')} berhasil disinkronkan otomatis dari laptop lain.`,
                 'success'
               );
             }
@@ -244,10 +318,10 @@ export default function App() {
     // 1. Initial check immediately on application startup
     performSyncCheck(false);
 
-    // 2. Continuous background polling every 6 seconds
+    // 2. Continuous real-time background polling every 4 seconds
     timer = setInterval(() => {
       performSyncCheck(true);
-    }, 6000);
+    }, 4000);
 
     // 3. Immediately sync whenever user switches to this browser tab or window
     const handleVisibilityOrFocus = () => {
@@ -380,32 +454,65 @@ export default function App() {
     );
 
     refreshAllData();
+    broadcastLocalChange();
 
     // Simpan instan dokumen langsung ke MySQL Hosting Rumahweb
-    saveDocumentToHosting(newDoc).then((res) => {
-      if (res.success) {
-        setSyncStatus('connected');
-      }
-    }).catch(() => {});
+    saveDocumentToHosting(newDoc)
+      .then((res) => {
+        if (res.success) {
+          setSyncStatus('connected');
+        }
+        syncToCloudIfEnabled();
+      })
+      .catch(() => {
+        syncToCloudIfEnabled();
+      });
 
-    syncToCloudIfEnabled();
     showToast(`Dokumen "${docData.title}" berhasil diarsipkan & disinkronkan ke cloud.`);
   };
 
-  const handleDeleteDocument = (docId: string, docTitle: string) => {
+  const handleDeleteDocument = (
+    docId: string,
+    docTitle: string,
+    studentId?: string,
+    docType?: DocumentType
+  ) => {
     if (window.confirm(`Hapus berkas dokumen "${docTitle}"?`)) {
       const doc = documents.find((d) => d.id === docId);
-      const student = doc ? students.find((s) => s.id === doc.studentId) : undefined;
-      deleteDocument(docId);
+      const targetStudentId = studentId || doc?.studentId;
+      const targetDocType = docType || doc?.docType;
+      const student = targetStudentId ? students.find((s) => s.id === targetStudentId) : undefined;
 
-      addAuditLog('DELETE_DOC', `Menghapus berkas dokumen: ${docTitle}`, doc?.studentId, student?.name);
+      // 1. Delete from local storage & record tombstones
+      deleteDocument(docId, targetStudentId, targetDocType);
 
+      // 2. Immediately update state so UI instantly disappears
       refreshAllData();
+      broadcastLocalChange();
 
-      // Hapus langsung dari MySQL Hosting Rumahweb
-      deleteDocumentFromHosting(docId).catch(() => {});
-      syncToCloudIfEnabled();
+      if (
+        previewDoc &&
+        (previewDoc.id === docId ||
+          (targetStudentId &&
+            targetDocType &&
+            previewDoc.studentId === targetStudentId &&
+            (previewDoc.docType || '').toLowerCase() === targetDocType.toLowerCase()))
+      ) {
+        setPreviewDoc(null);
+      }
+
+      addAuditLog('DELETE_DOC', `Menghapus berkas dokumen: ${docTitle}`, targetStudentId, student?.name);
       showToast('Dokumen berhasil dihapus dari arsip & cloud.', 'error');
+
+      // 3. Delete directly from MySQL hosting with studentId and docType to prevent resurrection
+      deleteDocumentFromHosting(docId, targetStudentId, targetDocType)
+        .then(() => {
+          syncToCloudIfEnabled();
+        })
+        .catch((err) => {
+          console.warn('Failed to delete doc from cloud hosting:', err);
+          syncToCloudIfEnabled();
+        });
     }
   };
 

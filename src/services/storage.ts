@@ -13,6 +13,7 @@ const STORAGE_KEYS = {
   ACADEMIC_YEARS: 'arsip_academic_years_v3',
   DELETED_STUDENT_IDS: 'arsip_deleted_student_ids_v1',
   DELETED_DOC_IDS: 'arsip_deleted_doc_ids_v1',
+  DELETED_DOC_KEYS: 'arsip_deleted_doc_keys_v1',
 };
 
 // Tombstone tracking for deleted students across devices
@@ -89,6 +90,37 @@ export function removeDeletedDocId(docId: string): void {
   try {
     const list = getDeletedDocIds().filter((id) => id !== docId);
     localStorage.setItem(STORAGE_KEYS.DELETED_DOC_IDS, JSON.stringify(list));
+  } catch {}
+}
+
+// Additional tombstone by studentId:docType so deleted documents never resurrect even if ID differs
+export function getDeletedDocKeys(): string[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.DELETED_DOC_KEYS);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function recordDeletedDocKey(studentId: string, docType: string): void {
+  try {
+    const key = `${studentId}:${docType.toLowerCase()}`;
+    const list = getDeletedDocKeys();
+    if (!list.includes(key)) {
+      list.push(key);
+      localStorage.setItem(STORAGE_KEYS.DELETED_DOC_KEYS, JSON.stringify(list.slice(-1000)));
+    }
+  } catch {}
+}
+
+export function removeDeletedDocKey(studentId: string, docType: string): void {
+  try {
+    const key = `${studentId}:${docType.toLowerCase()}`;
+    const list = getDeletedDocKeys().filter((k) => k !== key);
+    localStorage.setItem(STORAGE_KEYS.DELETED_DOC_KEYS, JSON.stringify(list));
   } catch {}
 }
 
@@ -671,7 +703,10 @@ export function deleteStudent(studentId: string): void {
 
   // Also remove documents and track their tombstones
   const docs = getDocuments();
-  docs.filter((d) => d.studentId === studentId).forEach((d) => recordDeletedDocId(d.id));
+  docs.filter((d) => d.studentId === studentId).forEach((d) => {
+    recordDeletedDocId(d.id);
+    if (d.docType) recordDeletedDocKey(studentId, d.docType);
+  });
   const updatedDocs = docs.filter((d) => d.studentId !== studentId);
   localStorage.setItem(STORAGE_KEYS.DOCUMENTS, JSON.stringify(updatedDocs));
 }
@@ -690,11 +725,15 @@ export function getDocuments(studentId?: string): StudentDocument[] {
 export function saveDocument(doc: StudentDocument): StudentDocument {
   const docs = getDocuments();
   removeDeletedDocId(doc.id);
+  if (doc.studentId && doc.docType) {
+    removeDeletedDocKey(doc.studentId, doc.docType);
+  }
   const docWithSync: StudentDocument = {
     ...doc,
+    verificationStatus: 'verified', // All uploaded docs are valid/terarsip by default (no separate verification needed)
     syncedWithCloud: false,
   };
-  const idx = docs.findIndex((d) => d.id === doc.id);
+  const idx = docs.findIndex((d) => d.id === doc.id || (doc.studentId && doc.docType && d.studentId === doc.studentId && d.docType === doc.docType));
   if (idx !== -1) {
     docs[idx] = docWithSync;
   } else {
@@ -704,10 +743,28 @@ export function saveDocument(doc: StudentDocument): StudentDocument {
   return docWithSync;
 }
 
-export function deleteDocument(docId: string): void {
-  recordDeletedDocId(docId);
+export function deleteDocument(docId: string, studentId?: string, docType?: DocumentType): void {
   const docs = getDocuments();
-  const updated = docs.filter((d) => d.id !== docId);
+  const target = docs.find((d) => d.id === docId);
+  const sId = studentId || target?.studentId;
+  const dType = (docType || target?.docType)?.toLowerCase();
+
+  recordDeletedDocId(docId);
+  if (sId && dType) {
+    recordDeletedDocKey(sId, dType);
+  }
+
+  const updated = docs.filter((d) => {
+    if (d.id === docId) {
+      recordDeletedDocId(d.id);
+      return false;
+    }
+    if (sId && dType && d.studentId === sId && d.docType?.toLowerCase() === dType) {
+      recordDeletedDocId(d.id);
+      return false;
+    }
+    return true;
+  });
   localStorage.setItem(STORAGE_KEYS.DOCUMENTS, JSON.stringify(updated));
 }
 
@@ -1129,6 +1186,7 @@ export function smartMergeRemoteData(data: {
   // 3. Bidirectional Smart Merge for Documents
   const localDocs = getDocuments();
   const deletedDocIds = new Set(getDeletedDocIds());
+  const deletedDocKeys = new Set(getDeletedDocKeys());
   const remoteDocs = Array.isArray(data.documents) ? data.documents : [];
   const docsToPush: StudentDocument[] = [];
   const deletedDocsToSync: string[] = [];
@@ -1137,7 +1195,13 @@ export function smartMergeRemoteData(data: {
 
   const docMap = new Map<string, StudentDocument>();
   const localDocMap = new Map<string, StudentDocument>();
-  localDocs.forEach((d) => localDocMap.set(d.id, d));
+  const localDocByKey = new Map<string, StudentDocument>();
+  localDocs.forEach((d) => {
+    localDocMap.set(d.id, d);
+    if (d.studentId && d.docType) {
+      localDocByKey.set(`${d.studentId}:${d.docType.toLowerCase()}`, d);
+    }
+  });
 
   // 3a. Process Remote Documents
   for (const rawRDoc of remoteDocs) {
@@ -1168,33 +1232,49 @@ export function smartMergeRemoteData(data: {
     };
 
     // If document was deleted locally or its student was deleted, do NOT resurrect it!
-    if (deletedDocIds.has(rDoc.id) || deletedIds.has(rDoc.studentId) || !mergedMap.has(rDoc.studentId)) {
+    const docKey = `${rDoc.studentId}:${(rDoc.docType || '').toLowerCase()}`;
+    if (
+      deletedDocIds.has(rDoc.id) ||
+      deletedDocKeys.has(docKey) ||
+      deletedIds.has(rDoc.studentId) ||
+      !mergedMap.has(rDoc.studentId)
+    ) {
       deletedDocsToSync.push(rDoc.id);
       continue;
     }
 
-    const lDoc = localDocMap.get(rDoc.id);
+    const lDoc = localDocMap.get(rDoc.id) || localDocByKey.get(docKey);
     if (lDoc) {
-      if (lDoc.syncedWithCloud === false) {
-        // Local has unsynced updates, keep local data and push
-        const mergedDoc = {
+      const lTime = new Date(lDoc.uploadedAt || 0).getTime();
+      const rTime = new Date(rDoc.uploadedAt || 0).getTime();
+
+      if (lDoc.syncedWithCloud === false && lTime > rTime) {
+        // Local has unsynced newer updates, keep local data and push
+        const mergedDoc: StudentDocument = {
           ...rDoc,
           ...lDoc,
           fileDataUrl: lDoc.fileDataUrl || rDoc.fileDataUrl,
         };
-        docMap.set(rDoc.id, mergedDoc);
+        docMap.set(mergedDoc.id, mergedDoc);
         docsToPush.push(mergedDoc);
         localDocsAddedOrUpdated++;
       } else {
-        // Remote is authoritative, keep existing local dataUrl if remote dataUrl is empty
-        docMap.set(rDoc.id, {
+        // Remote is authoritative or newer, keep existing local dataUrl if remote dataUrl is empty
+        const mergedDoc: StudentDocument = {
           ...rDoc,
+          id: lDoc.id || rDoc.id,
           fileDataUrl: rDoc.fileDataUrl || lDoc.fileDataUrl,
           syncedWithCloud: true,
-        });
-        remoteDocsAddedOrUpdated++;
+        };
+        docMap.set(mergedDoc.id, mergedDoc);
+        if (rTime > lTime || !lDoc.fileDataUrl) {
+          remoteDocsAddedOrUpdated++;
+        }
       }
-      localDocMap.delete(rDoc.id);
+      localDocMap.delete(lDoc.id);
+      if (lDoc.studentId && lDoc.docType) {
+        localDocByKey.delete(`${lDoc.studentId}:${lDoc.docType.toLowerCase()}`);
+      }
     } else {
       // Remote doc newly received
       docMap.set(rDoc.id, rDoc);
@@ -1204,7 +1284,8 @@ export function smartMergeRemoteData(data: {
 
   // 3b. Process remaining Local Documents
   for (const [id, lDoc] of localDocMap.entries()) {
-    if (deletedDocIds.has(id)) {
+    const lDocKey = `${lDoc.studentId}:${(lDoc.docType || '').toLowerCase()}`;
+    if (deletedDocIds.has(id) || deletedDocKeys.has(lDocKey)) {
       deletedDocsToSync.push(id);
       continue;
     }
@@ -1213,6 +1294,14 @@ export function smartMergeRemoteData(data: {
     if (deletedIds.has(lDoc.studentId) || !mergedMap.has(lDoc.studentId)) {
       recordDeletedDocId(id);
       deletedDocsToSync.push(id);
+      continue;
+    }
+
+    // Check if docMap already has this student and docType merged
+    const alreadyMerged = Array.from(docMap.values()).some(
+      (d) => d.studentId === lDoc.studentId && d.docType?.toLowerCase() === lDoc.docType?.toLowerCase()
+    );
+    if (alreadyMerged) {
       continue;
     }
 

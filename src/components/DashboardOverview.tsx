@@ -3,8 +3,6 @@ import {
   FileText,
   Users,
   CheckCircle2,
-  Clock,
-  AlertTriangle,
   Upload,
   Search,
   ArrowRight,
@@ -47,9 +45,6 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
   // Key metrics calculation
   const totalStudents = students.length;
   const totalDocuments = documents.length;
-  const verifiedDocuments = documents.filter((d) => d.verificationStatus === 'verified').length;
-  const pendingDocuments = documents.filter((d) => d.verificationStatus === 'pending').length;
-  const revisionDocuments = documents.filter((d) => d.verificationStatus === 'revision').length;
 
   // Completeness stats across all students
   const studentCompletenessMap = students.map((s) => ({
@@ -270,7 +265,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
             Pusat Pengelolaan Arsip Digital 3 Lembaga
           </h1>
           <p className="mt-2 text-sm sm:text-base text-slate-300 leading-relaxed">
-            Menyimpan, mengelola, mencari, dan memverifikasi dokumen penting (KK, KTP, Akta Kelahiran, Ijazah, KIP)
+            Menyimpan, mengelola, mencari, dan mengarsipkan dokumen penting (KK, KTP, Akta Kelahiran, Ijazah, KIP)
             secara terstruktur dan terpisah antara jenjang <strong>SD</strong>, <strong>SMP</strong>, dan <strong>SMK</strong>.
           </p>
 

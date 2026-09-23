@@ -39,8 +39,8 @@ interface StudentDossierModalProps {
   documents: StudentDocument[];
   onClose: () => void;
   onUploadDocument: (docData: Omit<StudentDocument, 'id' | 'uploadedAt' | 'version'>) => void;
-  onDeleteDocument: (docId: string, docTitle: string) => void;
-  onVerifyDocument: (docId: string, status: VerificationStatus, notes?: string) => void;
+  onDeleteDocument: (docId: string, docTitle: string, studentId?: string, docType?: DocumentType) => void;
+  onVerifyDocument?: (docId: string, status: VerificationStatus, notes?: string) => void;
   onPreviewDocument: (doc: StudentDocument) => void;
   currentUser: UserType;
 }
@@ -51,15 +51,11 @@ export const StudentDossierModal: React.FC<StudentDossierModalProps> = ({
   onClose,
   onUploadDocument,
   onDeleteDocument,
-  onVerifyDocument,
   onPreviewDocument,
   currentUser,
 }) => {
   const [activeTab, setActiveTab] = useState<'documents' | 'history'>('documents');
   const [selectedUploadType, setSelectedUploadType] = useState<DocumentType | null>(null);
-  const [verificationModalDoc, setVerificationModalDoc] = useState<StudentDocument | null>(null);
-  const [verificationNotes, setVerificationNotes] = useState('');
-  const [verificationStatusToSet, setVerificationStatusToSet] = useState<VerificationStatus>('verified');
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [targetUploadDocType, setTargetUploadDocType] = useState<DocumentType>('kk');
@@ -119,21 +115,8 @@ export const StudentDossierModal: React.FC<StudentDossierModalProps> = ({
       fileDataUrl: sampleDataUrl,
       uploadedBy: `${currentUser.name} (Simulasi Otomatis)`,
       verificationStatus: 'verified',
-      notes: 'Dokumen digital resmi tervalidasi sistem.',
+      notes: 'Dokumen digital resmi terarsip.',
     });
-  };
-
-  const openVerificationDialog = (doc: StudentDocument) => {
-    setVerificationModalDoc(doc);
-    setVerificationStatusToSet(doc.verificationStatus === 'unverified' ? 'verified' : doc.verificationStatus);
-    setVerificationNotes(doc.notes || '');
-  };
-
-  const saveVerification = () => {
-    if (verificationModalDoc) {
-      onVerifyDocument(verificationModalDoc.id, verificationStatusToSet, verificationNotes);
-      setVerificationModalDoc(null);
-    }
   };
 
   const getDocIcon = (type: DocumentType) => {
@@ -271,7 +254,7 @@ export const StudentDossierModal: React.FC<StudentDossierModalProps> = ({
                 <div className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
                   <span>Status Kelengkapan: {completeness.status}</span>
                   <span className="text-slate-400 font-normal">
-                    ({completeness.mandatoryUploaded} dari 3 Dokumen Pokok Terverifikasi)
+                    ({completeness.mandatoryUploaded} dari 3 Dokumen Pokok Terunggah)
                   </span>
                 </div>
                 <div className="text-[11px] text-slate-500">
@@ -320,10 +303,6 @@ export const StudentDossierModal: React.FC<StudentDossierModalProps> = ({
 
               if (doc) {
                 // Uploaded Card
-                const isVerified = doc.verificationStatus === 'verified';
-                const isRevision = doc.verificationStatus === 'revision';
-                const isPending = doc.verificationStatus === 'pending';
-
                 return (
                   <div
                     key={type}
@@ -336,21 +315,9 @@ export const StudentDossierModal: React.FC<StudentDossierModalProps> = ({
                           <Icon className="w-4 h-4" />
                         </div>
                         <div className="flex items-center gap-1">
-                          {isVerified && (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                              <CheckCircle2 className="w-3 h-3" /> Valid
-                            </span>
-                          )}
-                          {isPending && (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
-                              <Clock className="w-3 h-3" /> Menunggu
-                            </span>
-                          )}
-                          {isRevision && (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
-                              <AlertTriangle className="w-3 h-3" /> Revisi
-                            </span>
-                          )}
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            <CheckCircle2 className="w-3 h-3" /> Terarsip
+                          </span>
                         </div>
                       </div>
 
@@ -401,16 +368,6 @@ export const StudentDossierModal: React.FC<StudentDossierModalProps> = ({
                       </div>
 
                       <div className="flex items-center gap-1">
-                        {currentUser.role !== 'petugas_tu' && (
-                          <button
-                            onClick={() => openVerificationDialog(doc)}
-                            className="px-2 py-1.5 rounded-lg text-xs font-semibold text-indigo-700 hover:bg-indigo-50 border border-indigo-200 transition"
-                            title="Verifikasi & Beri Catatan"
-                          >
-                            Verifikasi
-                          </button>
-                        )}
-
                         <button
                           onClick={() => triggerUploadFor(type)}
                           className="p-1.5 rounded-lg text-emerald-700 hover:bg-emerald-50 border border-emerald-200 transition"
@@ -429,7 +386,7 @@ export const StudentDossierModal: React.FC<StudentDossierModalProps> = ({
 
                         {currentUser.role === 'admin' && (
                           <button
-                            onClick={() => onDeleteDocument(doc.id, doc.title)}
+                            onClick={() => onDeleteDocument(doc.id, doc.title, doc.studentId, doc.docType)}
                             className="p-1.5 rounded-lg text-rose-600 hover:bg-rose-50 border border-rose-200 transition"
                             title="Hapus Dokumen"
                           >
@@ -533,90 +490,6 @@ export const StudentDossierModal: React.FC<StudentDossierModalProps> = ({
             setUploadModalDocType(null);
           }}
         />
-      )}
-
-      {/* Verification Status Dialog */}
-      {verificationModalDoc && (
-        <div className="fixed inset-0 z-60 bg-black/50 backdrop-blur-2xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl p-5 max-w-md w-full shadow-2xl border border-slate-200 space-y-4">
-            <div className="flex items-center justify-between">
-              <h4 className="font-extrabold text-slate-900 text-base">Verifikasi Keabsahan Dokumen</h4>
-              <button onClick={() => setVerificationModalDoc(null)} className="text-slate-400 hover:text-slate-600">
-                ✕
-              </button>
-            </div>
-
-            <div className="p-3 bg-slate-50 rounded-lg border border-slate-100 text-xs">
-              <div className="font-bold text-slate-800">{verificationModalDoc.title}</div>
-              <div className="text-slate-500 font-mono mt-0.5">{verificationModalDoc.fileName}</div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">Pilih Status Verifikasi:</label>
-              <div className="grid grid-cols-3 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setVerificationStatusToSet('verified')}
-                  className={`py-2 px-3 rounded-lg text-xs font-bold border text-center transition ${
-                    verificationStatusToSet === 'verified'
-                      ? 'bg-emerald-600 text-white border-emerald-600'
-                      : 'bg-white text-slate-700 border-slate-200 hover:bg-emerald-50'
-                  }`}
-                >
-                  ✓ Sah / Valid
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setVerificationStatusToSet('pending')}
-                  className={`py-2 px-3 rounded-lg text-xs font-bold border text-center transition ${
-                    verificationStatusToSet === 'pending'
-                      ? 'bg-amber-500 text-white border-amber-500'
-                      : 'bg-white text-slate-700 border-slate-200 hover:bg-amber-50'
-                  }`}
-                >
-                  ⏳ Pending
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setVerificationStatusToSet('revision')}
-                  className={`py-2 px-3 rounded-lg text-xs font-bold border text-center transition ${
-                    verificationStatusToSet === 'revision'
-                      ? 'bg-rose-600 text-white border-rose-600'
-                      : 'bg-white text-slate-700 border-slate-200 hover:bg-rose-50'
-                  }`}
-                >
-                  ⚠ Revisi
-                </button>
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">Catatan Verifikator / Petugas:</label>
-              <textarea
-                rows={3}
-                value={verificationNotes}
-                onChange={(e) => setVerificationNotes(e.target.value)}
-                placeholder="Misal: Nomor NIK sesuai dengan KK, stempel legalisir sah..."
-                className="w-full p-2.5 text-xs bg-slate-50 rounded-lg border border-slate-200 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-
-            <div className="flex justify-end gap-2 pt-2">
-              <button
-                onClick={() => setVerificationModalDoc(null)}
-                className="px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-100"
-              >
-                Batal
-              </button>
-              <button
-                onClick={saveVerification}
-                className="px-4 py-1.5 rounded-lg text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white shadow-2xs"
-              >
-                Simpan Status
-              </button>
-            </div>
-          </div>
-        </div>
       )}
     </div>
   );

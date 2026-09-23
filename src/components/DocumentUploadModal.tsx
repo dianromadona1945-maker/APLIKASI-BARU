@@ -415,7 +415,7 @@ export const DocumentUploadModal: React.FC<DocumentUploadModalProps> = ({
         fileSize: enhancedFileSize || 450000,
         fileDataUrl: enhancedResultUrl,
         uploadedBy: `${currentUser.name} (${currentUser.role})`,
-        verificationStatus: 'pending',
+        verificationStatus: 'verified',
         notes: `Dipindai melalui Kamera Dokumen Auto-Scan (Filter: ${filterPreset.toUpperCase()}).`,
       });
 
@@ -432,7 +432,7 @@ export const DocumentUploadModal: React.FC<DocumentUploadModalProps> = ({
         fileSize: selectedFile.size,
         fileDataUrl: filePreviewUrl,
         uploadedBy: `${currentUser.name} (${currentUser.role})`,
-        verificationStatus: 'pending',
+        verificationStatus: 'verified',
         notes: 'Dokumen diunggah melalui File Manager.',
       });
 
@@ -1085,7 +1085,7 @@ export const DocumentUploadModal: React.FC<DocumentUploadModalProps> = ({
               </span>
             ) : (
               <span>
-                Format dokumen yang diunggah akan otomatis diverifikasi dan dicatat ke riwayat log.
+                Dokumen yang diunggah akan langsung tersimpan ke arsip dan dicatat ke riwayat log.
               </span>
             )}
           </div>

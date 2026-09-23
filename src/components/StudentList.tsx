@@ -232,34 +232,14 @@ export const StudentList: React.FC<StudentListProps> = ({
       );
     }
 
-    if (doc.verificationStatus === 'verified') {
-      return (
-        <span
-          title={`${doc.title} (Terverifikasi)`}
-          className="w-6 h-6 rounded-md bg-emerald-100 border border-emerald-300 text-[10px] font-bold text-emerald-800 flex items-center justify-center shadow-2xs"
-        >
-          ✓
-        </span>
-      );
-    } else if (doc.verificationStatus === 'revision') {
-      return (
-        <span
-          title={`${doc.title} (Perlu Revisi)`}
-          className="w-6 h-6 rounded-md bg-rose-100 border border-rose-300 text-[10px] font-bold text-rose-800 flex items-center justify-center"
-        >
-          !
-        </span>
-      );
-    } else {
-      return (
-        <span
-          title={`${doc.title} (Menunggu Verifikasi)`}
-          className="w-6 h-6 rounded-md bg-amber-100 border border-amber-300 text-[10px] font-bold text-amber-800 flex items-center justify-center"
-        >
-          ?
-        </span>
-      );
-    }
+    return (
+      <span
+        title={`${doc.title} (Terarsip)`}
+        className="w-6 h-6 rounded-md bg-emerald-100 border border-emerald-300 text-[10px] font-bold text-emerald-800 flex items-center justify-center shadow-2xs"
+      >
+        ✓
+      </span>
+    );
   };
 
   return (

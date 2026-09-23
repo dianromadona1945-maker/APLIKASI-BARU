@@ -26,6 +26,7 @@ export interface RumahwebSyncConfig {
 
 const SYNC_CONFIG_KEY = 'arsip_rumahweb_sync_config_v1';
 const LAST_KNOWN_UPDATE_KEY = 'arsip_rumahweb_last_known_update_v1';
+const LAST_KNOWN_DOC_UPDATE_KEY = 'arsip_rumahweb_last_known_doc_update_v1';
 
 let isSyncInProgress = false;
 
@@ -44,6 +45,20 @@ export function getLastKnownSyncTimestamp(): string {
 export function saveLastKnownSyncTimestamp(ts: string): void {
   try {
     localStorage.setItem(LAST_KNOWN_UPDATE_KEY, ts);
+  } catch {}
+}
+
+export function getLastKnownDocSyncTimestamp(): string {
+  try {
+    return localStorage.getItem(LAST_KNOWN_DOC_UPDATE_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
+export function saveLastKnownDocSyncTimestamp(ts: string): void {
+  try {
+    localStorage.setItem(LAST_KNOWN_DOC_UPDATE_KEY, ts);
   } catch {}
 }
 
@@ -86,12 +101,14 @@ export function saveSyncConfig(config: Partial<RumahwebSyncConfig>): RumahwebSyn
 
 /**
  * Lightweight check to detect if server data has changed without pulling entire database
+ * Uses action=check_sync for instant detection of student or document changes
  */
 export async function checkServerSyncStatus(): Promise<{
   success: boolean;
   counts?: { students: number; documents: number; academicYears: number };
   lastStudentUpdate?: string;
   lastDocUpdate?: string;
+  serverTime?: string;
   error?: string;
 }> {
   const config = getSyncConfig();
@@ -102,9 +119,10 @@ export async function checkServerSyncStatus(): Promise<{
   try {
     const cleanUrl = config.apiUrl.trim();
     const url = new URL(cleanUrl);
-    url.searchParams.set('action', 'test');
+    // Primary: use action=check_sync which returns real-time max upload_date for documents and updated_at for students
+    url.searchParams.set('action', 'check_sync');
 
-    const response = await fetch(url.toString(), {
+    let response = await fetch(url.toString(), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -112,6 +130,19 @@ export async function checkServerSyncStatus(): Promise<{
       },
       body: JSON.stringify({ key: config.syncKey.trim() }),
     });
+
+    // Fallback: if server has an older api.php that does not have check_sync, fallback to action=test
+    if (!response.ok) {
+      url.searchParams.set('action', 'test');
+      response = await fetch(url.toString(), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Sync-Key': config.syncKey.trim(),
+        },
+        body: JSON.stringify({ key: config.syncKey.trim() }),
+      });
+    }
 
     if (!response.ok) {
       return { success: false, error: `HTTP ${response.status}` };
@@ -128,6 +159,7 @@ export async function checkServerSyncStatus(): Promise<{
         counts: data.counts,
         lastStudentUpdate: data.lastStudentUpdate || '',
         lastDocUpdate: data.lastDocUpdate || '',
+        serverTime: data.server_time || '',
       };
     }
     return { success: false, error: data.error || 'Check failed' };
@@ -334,7 +366,11 @@ export async function pushStudentsToHosting(students: Student[]): Promise<{ succ
   }
 }
 
-export async function deleteDocumentFromHosting(docId: string): Promise<{ success: boolean; message: string }> {
+export async function deleteDocumentFromHosting(
+  docId: string,
+  studentId?: string,
+  docType?: string
+): Promise<{ success: boolean; message: string }> {
   const config = getSyncConfig();
   if (!config.apiUrl) {
     return { success: false, message: 'URL API belum dikonfigurasi' };
@@ -351,6 +387,8 @@ export async function deleteDocumentFromHosting(docId: string): Promise<{ succes
       body: JSON.stringify({
         key: config.syncKey.trim(),
         docId,
+        studentId,
+        docType,
       }),
     });
     const result = await response.json();
@@ -588,7 +626,23 @@ export async function executeTwoWaySync(): Promise<{
     }
 
     const now = new Date().toISOString();
-    saveLastKnownSyncTimestamp(now);
+    // Save latest document and student timestamps from remote data
+    const remoteDocs = Array.isArray(pullResult.data.documents) ? pullResult.data.documents : [];
+    const remoteStudents = Array.isArray(pullResult.data.students) ? pullResult.data.students : [];
+    const latestDocUpdate = remoteDocs.reduce((max: string, d: any) => {
+      const ts = d.uploadedAt || d.upload_date || '';
+      return ts > max ? ts : max;
+    }, '');
+    const latestStudentUpdate = remoteStudents.reduce((max: string, s: any) => {
+      const ts = s.updatedAt || s.createdAt || s.updated_at || '';
+      return ts > max ? ts : max;
+    }, '');
+
+    saveLastKnownSyncTimestamp(latestStudentUpdate || now);
+    if (latestDocUpdate) {
+      saveLastKnownDocSyncTimestamp(latestDocUpdate);
+    }
+
     const finalDocsList = getDocuments();
     const msg = `Sinkronisasi Live sukses: ${mergeResult.mergedStudents.length} siswa (${pushedCount} dikirim, ${mergeResult.remoteStudentsAddedOrUpdated} ditarik), ${finalDocsList.length} dokumen (${pushedDocsCount} dikirim, ${mergeResult.remoteDocsAddedOrUpdated} ditarik)`;
     
@@ -1174,15 +1228,31 @@ function handlePushDocuments($pdo, $body) {
 
 function handleDeleteDocument($pdo, $body) {
     $docId = $body['docId'] ?? '';
+    $studentId = $body['studentId'] ?? '';
+    $docType = $body['docType'] ?? '';
+
+    $where = [];
+    $params = [];
     if (!empty($docId)) {
-        $stmt = $pdo->prepare("DELETE FROM \`arsip_documents\` WHERE \`id\` = :id");
-        $stmt->execute([':id' => $docId]);
+        $where[] = "\`id\` = :id";
+        $params[':id'] = $docId;
+    }
+    if (!empty($studentId) && !empty($docType)) {
+        $where[] = "(\`student_id\` = :student_id AND LOWER(\`type\`) = LOWER(:doc_type))";
+        $params[':student_id'] = $studentId;
+        $params[':doc_type'] = $docType;
+    }
+
+    if (!empty($where)) {
+        $sql = "DELETE FROM \`arsip_documents\` WHERE " . implode(" OR ", $where);
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
         echo json_encode([
             'success' => true,
             'message' => 'Dokumen berhasil dihapus dari cloud MySQL.'
         ]);
     } else {
-        echo json_encode(['success' => false, 'error' => 'ID dokumen tidak boleh kosong.']);
+        echo json_encode(['success' => false, 'error' => 'Parameter ID atau Siswa/Tipe tidak boleh kosong.']);
     }
 }
 
