@@ -26,6 +26,7 @@ interface SidebarProps {
   currentUser: User;
   onSwitchUserClick: () => void;
   onLogoutClick: () => void;
+  onEditProfileClick?: () => void;
   onLoginAsAdminClick?: () => void;
   onManageAcademicYears?: () => void;
   onOpenRumahwebSync?: () => void;
@@ -41,6 +42,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   currentUser,
   onSwitchUserClick,
   onLogoutClick,
+  onEditProfileClick,
   onLoginAsAdminClick,
   onManageAcademicYears,
   onOpenRumahwebSync,
@@ -294,7 +296,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* Sidebar Footer: Active User & Logout */}
         <div className="p-4 border-t border-slate-800/80 bg-slate-950/50 space-y-3">
           {/* User badge */}
-          <div className="flex items-center justify-between">
+          <div
+            onClick={onEditProfileClick}
+            title={onEditProfileClick ? 'Klik untuk mengubah nama atau kata sandi Anda' : undefined}
+            className={`flex items-center justify-between p-1.5 rounded-xl transition ${
+              onEditProfileClick ? 'hover:bg-slate-800/60 cursor-pointer' : ''
+            }`}
+          >
             <div className="flex items-center space-x-2.5 min-w-0">
               <div
                 className={`w-9 h-9 rounded-xl font-extrabold text-xs flex items-center justify-center shrink-0 shadow-xs ${

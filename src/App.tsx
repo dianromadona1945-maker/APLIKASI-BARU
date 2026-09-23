@@ -607,6 +607,7 @@ export default function App() {
             currentUser={currentUser}
             onSwitchUserClick={() => setIsUserSwitcherOpen(true)}
             onLogoutClick={handleLogout}
+            onEditProfileClick={() => setIsEditProfileOpen(true)}
             onLoginAsAdminClick={currentUser.role !== 'admin' ? handleLoginAsAdminDirectly : undefined}
             onManageAcademicYears={() => setIsManageYearsOpen(true)}
             onOpenRumahwebSync={() => setIsRumahwebSyncOpen(true)}
