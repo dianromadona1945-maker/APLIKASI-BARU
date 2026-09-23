@@ -613,19 +613,7 @@ export async function executeTwoWaySync(): Promise<{
     // 2. Perform safe Bidirectional Smart Merge locally (never loses newly added students or docs!)
     const mergeResult = smartMergeRemoteData(pullResult.data);
 
-    // 3. Delete any student & document records on cloud that were marked deleted locally
-    if (mergeResult.deletedToSync && mergeResult.deletedToSync.length > 0) {
-      for (const delId of mergeResult.deletedToSync) {
-        deleteStudentFromHosting(delId).catch(() => {});
-      }
-    }
-    if (mergeResult.deletedDocsToSync && mergeResult.deletedDocsToSync.length > 0) {
-      for (const delDocId of mergeResult.deletedDocsToSync) {
-        deleteDocumentFromHosting(delDocId).catch(() => {});
-      }
-    }
-
-    // 4. Push local student additions/updates to cloud
+    // 3. Push local student additions/updates to cloud
     let pushedCount = 0;
     if (mergeResult.studentsToPush && mergeResult.studentsToPush.length > 0) {
       const pushRes = await pushStudentsToHosting(mergeResult.studentsToPush);
@@ -736,8 +724,8 @@ export async function pushAllDataToHosting(payload: {
         documents: payload.documents,
         academicYears: payload.academicYears,
         logs: payload.logs || [],
-        deletedIds: getDeletedStudentIds(),
-        deletedDocIds: getDeletedDocIds(),
+        deletedIds: payload.mirror === true ? getDeletedStudentIds() : [],
+        deletedDocIds: payload.mirror === true ? getDeletedDocIds() : [],
         clear_all: payload.clear_all === true,
         mirror: payload.mirror === true, // Default to FALSE to prevent destructive deletion
       }),
@@ -1157,11 +1145,6 @@ function initDatabaseTables($pdo) {
         $pdo->exec("ALTER TABLE \`arsip_documents\` ADD COLUMN \`raw_json\` LONGTEXT DEFAULT NULL");
     } catch (Exception $e) {}
 
-    // Otomatis bersihkan dokumen yatim (dokumen siswa lama/demo yang sudah dihapus)
-    try {
-        $pdo->exec("DELETE FROM \`arsip_documents\` WHERE \`student_id\` NOT IN (SELECT \`id\` FROM \`arsip_students\`)");
-    } catch (Exception $e) {}
-
     // Tabel Pengaturan Tahun Pelajaran
     $pdo->exec("CREATE TABLE IF NOT EXISTS \`arsip_academic_years\` (
         \`id\` INT AUTO_INCREMENT PRIMARY KEY,
@@ -1180,11 +1163,6 @@ function initDatabaseTables($pdo) {
 }
 
 function handleTest($pdo) {
-    // Bersihkan orphan docs
-    try {
-        $pdo->exec("DELETE FROM \`arsip_documents\` WHERE \`student_id\` NOT IN (SELECT \`id\` FROM \`arsip_students\`)");
-    } catch (Exception $e) {}
-
     $stmt1 = $pdo->query("SELECT COUNT(*) AS total, MAX(\`updated_at\`) AS last_updated FROM \`arsip_students\`");
     $sInfo = $stmt1->fetch();
 
@@ -1577,11 +1555,6 @@ function handlePushAll($pdo, $body) {
             }
         }
 
-        // Bersihkan otomatis dokumen yatim
-        try {
-            $pdo->exec("DELETE FROM \`arsip_documents\` WHERE \`student_id\` NOT IN (SELECT \`id\` FROM \`arsip_students\`)");
-        } catch (Exception $e) {}
-
         // Upsert Siswa
         if (!empty($students)) {
             $stmtStudent = $pdo->prepare("INSERT INTO \`arsip_students\` (
@@ -1704,11 +1677,6 @@ function handlePushAll($pdo, $body) {
 }
 
 function handlePullAll($pdo) {
-    // Bersihkan orphan docs terlebih dahulu
-    try {
-        $pdo->exec("DELETE FROM \`arsip_documents\` WHERE \`student_id\` NOT IN (SELECT \`id\` FROM \`arsip_students\`)");
-    } catch (Exception $e) {}
-
     // Ambil semua data siswa
     $stmt1 = $pdo->query("SELECT * FROM \`arsip_students\` ORDER BY \`institution\` ASC, \`name\` ASC");
     $rawStudents = $stmt1->fetchAll();
@@ -1796,10 +1764,6 @@ function handlePullAll($pdo) {
 }
 
 function handleCheckSync($pdo) {
-    try {
-        $pdo->exec("DELETE FROM \`arsip_documents\` WHERE \`student_id\` NOT IN (SELECT \`id\` FROM \`arsip_students\`)");
-    } catch (Exception $e) {}
-
     $stmt1 = $pdo->query("SELECT COUNT(*) AS total, MAX(\`updated_at\`) AS last_updated FROM \`arsip_students\`");
     $sInfo = $stmt1->fetch();
 

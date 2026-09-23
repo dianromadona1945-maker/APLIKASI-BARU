@@ -338,6 +338,32 @@ export function initializeStorage(): void {
     purgeLegacyDemoData();
   }
 
+  // Sanitize tombstones: ensure real student and document IDs from other laptops are NOT mistakenly trapped in local deletion lists
+  const isTombstoneSanitized = localStorage.getItem('arsip_tombstones_sanitized_v3');
+  if (!isTombstoneSanitized) {
+    try {
+      const rawDel = localStorage.getItem(STORAGE_KEYS.DELETED_STUDENT_IDS);
+      if (rawDel) {
+        const parsed: string[] = JSON.parse(rawDel);
+        const cleaned = parsed.filter((id) => DEMO_STUDENT_IDS.includes(id));
+        localStorage.setItem(STORAGE_KEYS.DELETED_STUDENT_IDS, JSON.stringify(cleaned));
+      }
+      const rawDocDel = localStorage.getItem(STORAGE_KEYS.DELETED_DOC_IDS);
+      if (rawDocDel) {
+        const parsed: string[] = JSON.parse(rawDocDel);
+        const cleaned = parsed.filter((id) => id.startsWith('doc-std-00'));
+        localStorage.setItem(STORAGE_KEYS.DELETED_DOC_IDS, JSON.stringify(cleaned));
+      }
+      const rawDocKeyDel = localStorage.getItem(STORAGE_KEYS.DELETED_DOC_KEYS);
+      if (rawDocKeyDel) {
+        const parsed: string[] = JSON.parse(rawDocKeyDel);
+        const cleaned = parsed.filter((k) => DEMO_STUDENT_IDS.some((sid) => k.startsWith(sid)));
+        localStorage.setItem(STORAGE_KEYS.DELETED_DOC_KEYS, JSON.stringify(cleaned));
+      }
+      localStorage.setItem('arsip_tombstones_sanitized_v3', 'true');
+    } catch {}
+  }
+
   const isInitialized = localStorage.getItem(STORAGE_KEYS.INITIALIZED);
   if (!isInitialized) {
     // Seed users
@@ -1012,14 +1038,14 @@ export function smartMergeRemoteData(data: {
   logs?: AuditLog[];
 }): SmartMergeResult {
   const localStudents = getStudents();
-  const deletedIds = new Set(getDeletedStudentIds());
 
   const localMap = new Map<string, Student>();
   localStudents.forEach((s) => localMap.set(s.id, s));
 
-  // Build secondary indexes by NISN and NIS to match records even if ID differed
+  // Secondary indexes by NISN, NIS, and normalized Name + birthDate to match records even if local and remote IDs differed
   const localByNisn = new Map<string, Student>();
   const localByNis = new Map<string, Student>();
+  const localByName = new Map<string, Student>();
   localStudents.forEach((s) => {
     if (s.nisn && s.nisn.trim() && s.nisn !== '-' && s.nisn !== '0') {
       localByNisn.set(s.nisn.trim(), s);
@@ -1027,11 +1053,16 @@ export function smartMergeRemoteData(data: {
     if (s.nis && s.nis.trim() && s.nis !== '-' && s.nis !== '0') {
       localByNis.set(s.nis.trim(), s);
     }
+    const cleanName = (s.name || '').trim().toLowerCase();
+    if (cleanName) {
+      localByName.set(`${cleanName}:${s.birthDate || ''}`, s);
+    }
   });
 
   const mergedMap = new Map<string, Student>();
+  // Mapping of any local ID or alternative key to authoritative Cloud MySQL ID
+  const studentIdAliasMap = new Map<string, string>();
   const studentsToPush: Student[] = [];
-  const deletedToSync: string[] = [];
 
   let localStudentsAddedOrUpdated = 0;
   let remoteStudentsAddedOrUpdated = 0;
@@ -1042,12 +1073,13 @@ export function smartMergeRemoteData(data: {
   for (const remote of remoteList) {
     if (!remote || !remote.id) continue;
 
-    // If demo student or locally deleted on this laptop, do NOT resurrect it! Mark to delete on server
-    if (isDemoStudent(remote) || deletedIds.has(remote.id)) {
-      deletedToSync.push(remote.id);
-      recordDeletedStudentId(remote.id);
+    // Reject hardcoded legacy demo students (std-001..006)
+    if (isDemoStudent(remote)) {
       continue;
     }
+
+    // Clean any accidental local tombstone for this valid remote student
+    removeDeletedStudentId(remote.id);
 
     // Match with local student
     let local = localMap.get(remote.id);
@@ -1057,24 +1089,41 @@ export function smartMergeRemoteData(data: {
     if (!local && remote.nis && remote.nis.trim() && remote.nis !== '-') {
       local = localByNis.get(remote.nis.trim());
     }
+    if (!local && remote.name) {
+      const cleanName = remote.name.trim().toLowerCase();
+      local = localByName.get(`${cleanName}:${remote.birthDate || ''}`);
+    }
+
+    // Authoritative ID is ALWAYS remote.id (matches Cloud MySQL database)
+    const canonicalId = remote.id;
+    studentIdAliasMap.set(canonicalId, canonicalId);
 
     if (local) {
+      studentIdAliasMap.set(local.id, canonicalId);
+
       const lTime = new Date(local.updatedAt || local.createdAt || 0).getTime();
       const rTime = new Date(remote.updatedAt || remote.createdAt || 0).getTime();
 
       if (local.syncedWithCloud === false && lTime > rTime) {
-        // Local has unsynced newer changes: keep local and mark to push
-        mergedMap.set(local.id, local);
-        studentsToPush.push(local);
+        // Local has unsynced newer changes made on this computer
+        const merged: Student = {
+          ...remote,
+          ...local,
+          id: canonicalId,
+          syncedWithCloud: false,
+        };
+        mergedMap.set(canonicalId, merged);
+        studentsToPush.push(merged);
         localStudentsAddedOrUpdated++;
       } else {
-        // Remote is newer or equal: use remote and mark as synced
-        mergedMap.set(local.id, {
+        // Remote is newer or equal: adopt remote data with cloud canonical ID
+        const merged: Student = {
           ...local,
           ...remote,
-          id: local.id,
+          id: canonicalId,
           syncedWithCloud: true,
-        });
+        };
+        mergedMap.set(canonicalId, merged);
         if (rTime > lTime) {
           remoteStudentsAddedOrUpdated++;
         }
@@ -1082,33 +1131,32 @@ export function smartMergeRemoteData(data: {
       localMap.delete(local.id);
     } else {
       // Remote student does not exist locally -> add to local student list!
-      mergedMap.set(remote.id, {
+      const newStudent: Student = {
         ...remote,
+        id: canonicalId,
         syncedWithCloud: true,
-      });
+      };
+      mergedMap.set(canonicalId, newStudent);
       remoteStudentsAddedOrUpdated++;
     }
   }
 
   // 2. Process remaining Local Students that remote does NOT have
   for (const [id, local] of localMap.entries()) {
-    // If demo student or deleted, do NOT keep it: mark for deletion on server
-    if (isDemoStudent(local) || deletedIds.has(id)) {
-      deletedToSync.push(id);
-      recordDeletedStudentId(id);
+    if (isDemoStudent(local)) {
       continue;
     }
 
     // If student was already confirmed synced with cloud in the past (syncedWithCloud === true)
-    // but remoteList has students and is now missing this student, it was deleted on cloud by another device!
+    // and remoteList has students and is now missing this student, it was deleted on cloud by another device!
     if (local.syncedWithCloud === true && remoteList.length > 0) {
-      recordDeletedStudentId(id);
       continue;
     }
 
     // Otherwise, this student was newly created or updated locally and NOT yet synced!
-    // NEVER overwrite or delete it: keep it in merged and push to cloud!
+    // KEEP IT in merged and push to cloud!
     mergedMap.set(id, local);
+    studentIdAliasMap.set(id, id);
     studentsToPush.push(local);
     localStudentsAddedOrUpdated++;
   }
@@ -1118,21 +1166,22 @@ export function smartMergeRemoteData(data: {
 
   // 3. Bidirectional Smart Merge for Documents
   const localDocs = getDocuments();
-  const deletedDocIds = new Set(getDeletedDocIds());
-  const deletedDocKeys = new Set(getDeletedDocKeys());
   const remoteDocs = Array.isArray(data.documents) ? data.documents : [];
   const docsToPush: StudentDocument[] = [];
-  const deletedDocsToSync: string[] = [];
   let localDocsAddedOrUpdated = 0;
   let remoteDocsAddedOrUpdated = 0;
 
   const docMap = new Map<string, StudentDocument>();
   const localDocMap = new Map<string, StudentDocument>();
   const localDocByKey = new Map<string, StudentDocument>();
+
   localDocs.forEach((d) => {
-    localDocMap.set(d.id, d);
-    if (d.studentId && d.docType) {
-      localDocByKey.set(`${d.studentId}:${d.docType.toLowerCase()}`, d);
+    // Re-link studentId if aliased
+    const canonicalSid = studentIdAliasMap.get(d.studentId) || d.studentId;
+    const normalizedDoc = { ...d, studentId: canonicalSid };
+    localDocMap.set(d.id, normalizedDoc);
+    if (canonicalSid && d.docType) {
+      localDocByKey.set(`${canonicalSid}:${d.docType.toLowerCase()}`, normalizedDoc);
     }
   });
 
@@ -1140,10 +1189,27 @@ export function smartMergeRemoteData(data: {
   for (const rawRDoc of remoteDocs) {
     if (!rawRDoc || !rawRDoc.id) continue;
 
-    // Normalize fields from either camelCase or snake_case / PHP fallback
+    // Reject legacy demo documents
+    if (isDemoDocument(rawRDoc as any)) continue;
+
+    const rawSid = rawRDoc.studentId || (rawRDoc as any).student_id;
+    let resolvedSid = studentIdAliasMap.get(rawSid) || rawSid;
+
+    // If student not found by direct ID, try to locate student in mergedMap by NISN/NIS
+    if (!mergedMap.has(resolvedSid)) {
+      for (const s of mergedMap.values()) {
+        if ((s.nisn && s.nisn === rawSid) || (s.nis && s.nis === rawSid)) {
+          resolvedSid = s.id;
+          studentIdAliasMap.set(rawSid, s.id);
+          break;
+        }
+      }
+    }
+
+    // Normalize document fields
     const rDoc: StudentDocument = {
       id: rawRDoc.id,
-      studentId: rawRDoc.studentId || (rawRDoc as any).student_id,
+      studentId: resolvedSid,
       docType: (rawRDoc.docType || (rawRDoc as any).type || 'lainnya').toLowerCase() as any,
       title: rawRDoc.title || (rawRDoc as any).file_name || 'Dokumen Siswa',
       fileName: rawRDoc.fileName || (rawRDoc as any).file_name || 'dokumen.pdf',
@@ -1158,28 +1224,13 @@ export function smartMergeRemoteData(data: {
         ? 'verified'
         : (rawRDoc as any).status === 'Perlu Revisi'
         ? 'revision'
-        : 'pending') as any,
+        : 'verified') as any,
       notes: rawRDoc.notes || '',
       version: rawRDoc.version || 1,
       syncedWithCloud: true,
     };
 
-    // If demo doc, or student was deleted or demo student, or does not exist, do NOT resurrect document!
-    if (
-      isDemoDocument(rDoc) ||
-      DEMO_STUDENT_IDS.includes(rDoc.studentId) ||
-      deletedIds.has(rDoc.studentId) ||
-      deletedDocIds.has(rDoc.id) ||
-      deletedDocKeys.has(`${rDoc.studentId}:${(rDoc.docType || '').toLowerCase()}`) ||
-      !mergedMap.has(rDoc.studentId)
-    ) {
-      deletedDocsToSync.push(rDoc.id);
-      recordDeletedDocId(rDoc.id);
-      continue;
-    }
-
-    // Remote document exists and belongs to an active student!
-    // Clear any local tombstone so this document is fully recognized and never deleted by this laptop
+    // Remove any accidental local tombstones
     removeDeletedDocId(rDoc.id);
     if (rDoc.docType) {
       removeDeletedDocKey(rDoc.studentId, rDoc.docType);
@@ -1187,25 +1238,30 @@ export function smartMergeRemoteData(data: {
 
     const docKey = `${rDoc.studentId}:${(rDoc.docType || '').toLowerCase()}`;
     const lDoc = localDocMap.get(rDoc.id) || localDocByKey.get(docKey);
+
     if (lDoc) {
       const lTime = new Date(lDoc.uploadedAt || 0).getTime();
       const rTime = new Date(rDoc.uploadedAt || 0).getTime();
 
       if (lDoc.syncedWithCloud === false && lTime > rTime) {
-        // Local has unsynced newer updates, keep local data and push
+        // Local has unsynced newer updates made on this computer
         const mergedDoc: StudentDocument = {
           ...rDoc,
           ...lDoc,
+          studentId: resolvedSid,
           fileDataUrl: lDoc.fileDataUrl || rDoc.fileDataUrl,
+          syncedWithCloud: false,
         };
         docMap.set(mergedDoc.id, mergedDoc);
         docsToPush.push(mergedDoc);
         localDocsAddedOrUpdated++;
       } else {
-        // Remote is authoritative or newer, keep existing local dataUrl if remote dataUrl is empty
+        // Remote is authoritative or newer; preserve local fileDataUrl if remote is empty
         const mergedDoc: StudentDocument = {
+          ...lDoc,
           ...rDoc,
-          id: lDoc.id || rDoc.id,
+          id: rDoc.id,
+          studentId: resolvedSid,
           fileDataUrl: rDoc.fileDataUrl || lDoc.fileDataUrl,
           syncedWithCloud: true,
         };
@@ -1225,36 +1281,24 @@ export function smartMergeRemoteData(data: {
     }
   }
 
-  // 3b. Process remaining Local Documents
+  // 3b. Process remaining Local Documents that were not in remoteDocs
   for (const [id, lDoc] of localDocMap.entries()) {
-    // If demo doc or orphaned, do NOT keep it!
-    if (
-      isDemoDocument(lDoc) ||
-      DEMO_STUDENT_IDS.includes(lDoc.studentId) ||
-      deletedIds.has(lDoc.studentId) ||
-      deletedDocIds.has(id) ||
-      !mergedMap.has(lDoc.studentId)
-    ) {
-      deletedDocsToSync.push(id);
-      recordDeletedDocId(id);
-      continue;
-    }
+    if (isDemoDocument(lDoc)) continue;
 
     // Check if docMap already has this student and docType merged
     const alreadyMerged = Array.from(docMap.values()).some(
       (d) => d.studentId === lDoc.studentId && d.docType?.toLowerCase() === lDoc.docType?.toLowerCase()
     );
-    if (alreadyMerged) {
-      continue;
-    }
+    if (alreadyMerged) continue;
 
-    // If document was already confirmed synced in the past but remote is now missing it:
+    // If document was already confirmed synced in the past, but remote is now missing it:
     // It means it was deleted on the cloud by another user, so do not resurrect it.
     if (lDoc.syncedWithCloud === true) {
       continue;
     }
 
-    // Otherwise, local document was newly added or modified: KEEP IT AND PUSH TO CLOUD!
+    // Otherwise, local document was newly added or modified locally and not yet uploaded:
+    // KEEP IT AND PUSH TO CLOUD!
     docMap.set(id, lDoc);
     docsToPush.push(lDoc);
     localDocsAddedOrUpdated++;
@@ -1289,9 +1333,9 @@ export function smartMergeRemoteData(data: {
   return {
     mergedStudents: finalStudents,
     studentsToPush,
-    deletedToSync,
+    deletedToSync: [], // NEVER send deletion commands to cloud during a merge!
     docsToPush,
-    deletedDocsToSync,
+    deletedDocsToSync: [], // NEVER send deletion commands to cloud during a merge!
     localStudentsAddedOrUpdated,
     remoteStudentsAddedOrUpdated,
     localDocsAddedOrUpdated,

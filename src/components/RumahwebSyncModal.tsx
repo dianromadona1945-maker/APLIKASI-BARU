@@ -460,41 +460,16 @@ export const RumahwebSyncModal: React.FC<RumahwebSyncModalProps> = ({
                 </div>
               </div>
 
-              {/* Ghost Documents / Orphan Alert & Cleaner */}
-              {config.serverCounts?.documents !== undefined && config.serverCounts.documents > 0 && documents.length === 0 && (
-                <div className="p-4 rounded-2xl bg-amber-50 border border-amber-300 flex items-start justify-between gap-3">
-                  <div className="flex items-start gap-3">
-                    <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-                    <div className="text-xs space-y-1">
-                      <p className="font-bold text-amber-900">
-                        Terdeteksi {config.serverCounts.documents} Dokumen Yatim/Hantu di Server Cloud
-                      </p>
-                      <p className="text-amber-800 leading-relaxed">
-                        Database cloud mendeteksi berkas dokumen dari data sampel lama yang siswanya sudah Anda hapus. Klik tombol di sebelah kanan untuk membersihkan seluruh dokumen yatim ini agar sinkron dan bersih 0 dokumen.
-                      </p>
-                    </div>
-                  </div>
-                  <button
-                    onClick={handleCleanOrphans}
-                    className="shrink-0 px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl text-xs transition cursor-pointer"
-                  >
-                    Bersihkan Dokumen Hantu
-                  </button>
-                </div>
-              )}
-
               {/* Discrepancy notice if local count differs from cloud server count */}
               {config.serverCounts?.students !== undefined && config.serverCounts.students !== students.length && (
-                <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 flex items-start gap-3">
-                  <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                <div className="p-4 rounded-2xl bg-blue-50 border border-blue-200 flex items-start gap-3">
+                  <Layers className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
                   <div className="text-xs space-y-1">
-                    <p className="font-bold text-amber-900">
-                      Perbedaan Jumlah Siswa ({students.length} di Komputer Ini vs {config.serverCounts.students} di Cloud Server)
+                    <p className="font-bold text-blue-900">
+                      Sinkronisasi Multi-Komputer ({students.length} Siswa Lokal &bull; {config.serverCounts.students} Siswa di Cloud)
                     </p>
-                    <p className="text-amber-800 leading-relaxed">
-                      {students.length < config.serverCounts.students
-                        ? `Ada ${config.serverCounts.students - students.length} siswa yang sudah Anda hapus di komputer ini tetapi masih tersimpan di cloud. Gunakan "Live Sync Cerdas 2-Arah (Smart Merge)" di bawah untuk menyelaraskan kedua sisi secara otomatis tanpa kehilangan data baru.`
-                        : `Ada ${students.length - config.serverCounts.students} siswa baru di komputer ini yang belum ada di cloud. Jalankan "Live Sync Cerdas 2-Arah" untuk mengunggahnya secara aman.`}
+                    <p className="text-blue-800 leading-relaxed">
+                      Sistem sinkronisasi 2-arah (Live Sync) akan menggabungkan data dari seluruh laptop secara aman tanpa menghapus berkas atau siswa yang diinputkan di komputer lain.
                     </p>
                   </div>
                 </div>
