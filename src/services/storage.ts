@@ -294,6 +294,16 @@ const SEED_STUDENTS: Student[] = [
 export function initializeStorage(): void {
   if (typeof window === 'undefined') return;
 
+  // Clear toxic local document tombstones so other laptops can sync documents freely
+  const tombstoneCleaned = localStorage.getItem('arsip_tombstone_clean_v3');
+  if (!tombstoneCleaned) {
+    try {
+      localStorage.removeItem(STORAGE_KEYS.DELETED_DOC_IDS);
+      localStorage.removeItem(STORAGE_KEYS.DELETED_DOC_KEYS);
+      localStorage.setItem('arsip_tombstone_clean_v3', 'true');
+    } catch {}
+  }
+
   const isInitialized = localStorage.getItem(STORAGE_KEYS.INITIALIZED);
   if (!isInitialized) {
     // Seed users
@@ -1231,18 +1241,20 @@ export function smartMergeRemoteData(data: {
       syncedWithCloud: true,
     };
 
-    // If document was deleted locally or its student was deleted, do NOT resurrect it!
-    const docKey = `${rDoc.studentId}:${(rDoc.docType || '').toLowerCase()}`;
-    if (
-      deletedDocIds.has(rDoc.id) ||
-      deletedDocKeys.has(docKey) ||
-      deletedIds.has(rDoc.studentId) ||
-      !mergedMap.has(rDoc.studentId)
-    ) {
+    // If student was deleted or does not exist, do NOT resurrect document!
+    if (deletedIds.has(rDoc.studentId) || !mergedMap.has(rDoc.studentId)) {
       deletedDocsToSync.push(rDoc.id);
       continue;
     }
 
+    // Remote document exists and belongs to an active student!
+    // Clear any local tombstone so this document is fully recognized and never deleted by this laptop
+    removeDeletedDocId(rDoc.id);
+    if (rDoc.docType) {
+      removeDeletedDocKey(rDoc.studentId, rDoc.docType);
+    }
+
+    const docKey = `${rDoc.studentId}:${(rDoc.docType || '').toLowerCase()}`;
     const lDoc = localDocMap.get(rDoc.id) || localDocByKey.get(docKey);
     if (lDoc) {
       const lTime = new Date(lDoc.uploadedAt || 0).getTime();
@@ -1276,7 +1288,7 @@ export function smartMergeRemoteData(data: {
         localDocByKey.delete(`${lDoc.studentId}:${lDoc.docType.toLowerCase()}`);
       }
     } else {
-      // Remote doc newly received
+      // Remote doc newly received from another laptop
       docMap.set(rDoc.id, rDoc);
       remoteDocsAddedOrUpdated++;
     }
@@ -1284,15 +1296,8 @@ export function smartMergeRemoteData(data: {
 
   // 3b. Process remaining Local Documents
   for (const [id, lDoc] of localDocMap.entries()) {
-    const lDocKey = `${lDoc.studentId}:${(lDoc.docType || '').toLowerCase()}`;
-    if (deletedDocIds.has(id) || deletedDocKeys.has(lDocKey)) {
-      deletedDocsToSync.push(id);
-      continue;
-    }
-
     // If orphaned (student no longer exists), do NOT keep it!
     if (deletedIds.has(lDoc.studentId) || !mergedMap.has(lDoc.studentId)) {
-      recordDeletedDocId(id);
       deletedDocsToSync.push(id);
       continue;
     }
@@ -1305,9 +1310,9 @@ export function smartMergeRemoteData(data: {
       continue;
     }
 
-    // If document was already confirmed synced in the past but remote now missing it, it was deleted on cloud
+    // If document was already confirmed synced in the past but remote is now missing it:
+    // It means it was deleted on the cloud by another user, so do not resurrect it.
     if (lDoc.syncedWithCloud === true) {
-      recordDeletedDocId(id);
       continue;
     }
 
