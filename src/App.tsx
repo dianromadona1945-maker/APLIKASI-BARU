@@ -267,12 +267,20 @@ export default function App() {
           const isFreshLocalSeed =
             currentStudents.length <= 6 && check.counts.students > 6;
 
+          // Routine background sync every 25 seconds if autoSync is enabled
+          const lastSyncTimeStr = config.lastSyncTime;
+          const secondsSinceLastSync = lastSyncTimeStr
+            ? (Date.now() - new Date(lastSyncTimeStr).getTime()) / 1000
+            : 999;
+          const routineSyncDue = secondsSinceLastSync > 25;
+
           shouldSync =
             studentCountDiffers ||
             docCountDiffers ||
             studentTimestampDiffers ||
             docTimestampDiffers ||
-            isFreshLocalSeed;
+            isFreshLocalSeed ||
+            routineSyncDue;
         } else if (!isBackground) {
           shouldSync = true;
         }
@@ -324,10 +332,10 @@ export default function App() {
     // 1. Initial check immediately on application startup
     performSyncCheck(false);
 
-    // 2. Continuous real-time background polling every 4 seconds
+    // 2. Continuous real-time background polling every 3 seconds
     timer = setInterval(() => {
       performSyncCheck(true);
-    }, 4000);
+    }, 3000);
 
     // 3. Immediately sync whenever user switches to this browser tab or window
     const handleVisibilityOrFocus = () => {
@@ -648,7 +656,10 @@ export default function App() {
                 <DashboardOverview
                   students={students}
                   documents={documents}
-                  onOpenStudentDossier={(std) => setSelectedStudentForDossier(std)}
+                  onOpenStudentDossier={(std) => {
+                    setSelectedStudentForDossier(std);
+                    syncToCloudIfEnabled();
+                  }}
                   onAddNewStudent={() => setStudentFormModal({ isOpen: true, student: null })}
                   onNavigate={(view) => setCurrentView(view === 'verifikasi' ? 'dashboard' : view)}
                 />
@@ -658,7 +669,10 @@ export default function App() {
                 <StudentList
                   students={students}
                   documents={documents}
-                  onOpenDossier={(std) => setSelectedStudentForDossier(std)}
+                  onOpenDossier={(std) => {
+                    setSelectedStudentForDossier(std);
+                    syncToCloudIfEnabled();
+                  }}
                   onAddNewStudent={() => setStudentFormModal({ isOpen: true, student: null })}
                   onOpenImportExcel={() => setIsImportExcelOpen(true)}
                   onEditStudent={(std) => setStudentFormModal({ isOpen: true, student: std })}

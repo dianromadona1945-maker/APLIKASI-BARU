@@ -131,8 +131,15 @@ export async function checkServerSyncStatus(): Promise<{
       body: JSON.stringify({ key: config.syncKey.trim() }),
     });
 
-    // Fallback: if server has an older api.php that does not have check_sync, fallback to action=test
-    if (!response.ok) {
+    let data: any = null;
+    if (response.ok) {
+      try {
+        data = await response.json();
+      } catch {}
+    }
+
+    // Fallback: if check_sync failed, returned HTTP error, or returned success:false (e.g. older api.php without check_sync), fallback to action=test!
+    if (!response.ok || !data || !data.success) {
       url.searchParams.set('action', 'test');
       response = await fetch(url.toString(), {
         method: 'POST',
@@ -142,13 +149,16 @@ export async function checkServerSyncStatus(): Promise<{
         },
         body: JSON.stringify({ key: config.syncKey.trim() }),
       });
+      if (response.ok) {
+        try {
+          data = await response.json();
+        } catch {}
+      }
     }
 
-    if (!response.ok) {
+    if (!response.ok || !data) {
       return { success: false, error: `HTTP ${response.status}` };
     }
-
-    const data = await response.json();
     if (data.success) {
       saveSyncConfig({
         lastSyncStatus: 'success',
@@ -284,18 +294,20 @@ export async function saveStudentToHosting(student: Student): Promise<{ success:
       }),
     });
 
-    if (!response.ok) {
+    let data: any = null;
+    if (response.ok) {
+      try {
+        data = await response.json();
+      } catch {}
+    }
+
+    if (!response.ok || !data || !data.success) {
       // Fallback: If server has older api.php without 'save_student', fallback to pushStudentsToHosting
       return await pushStudentsToHosting([student]);
     }
 
-    const data = await response.json();
-    if (data.success) {
-      markStudentsAsSynced([student.id]);
-      return { success: true, message: data.message || `Siswa ${student.name} berhasil disimpan di cloud` };
-    } else {
-      return await pushStudentsToHosting([student]);
-    }
+    markStudentsAsSynced([student.id]);
+    return { success: true, message: data.message || `Siswa ${student.name} berhasil disimpan di cloud` };
   } catch {
     try {
       return await pushStudentsToHosting([student]);
@@ -328,7 +340,14 @@ export async function pushStudentsToHosting(students: Student[]): Promise<{ succ
       }),
     });
 
-    if (!response.ok) {
+    let data: any = null;
+    if (response.ok) {
+      try {
+        data = await response.json();
+      } catch {}
+    }
+
+    if (!response.ok || !data || !data.success) {
       // Fallback to push_all with mirror: false (NON-DESTRUCTIVE: NEVER deletes existing server data)
       const fallbackUrl = new URL(config.apiUrl);
       fallbackUrl.searchParams.set('action', 'push_all');
@@ -355,12 +374,8 @@ export async function pushStudentsToHosting(students: Student[]): Promise<{ succ
       return { success: false, message: fbData.error || fbData.message || 'Gagal menyimpan siswa' };
     }
 
-    const data = await response.json();
-    if (data.success) {
-      markStudentsAsSynced(students.map((s) => s.id));
-      return { success: true, message: data.message || `${students.length} siswa tersimpan di cloud` };
-    }
-    return { success: false, message: data.error || data.message || 'Gagal menyimpan siswa' };
+    markStudentsAsSynced(students.map((s) => s.id));
+    return { success: true, message: data.message || `${students.length} siswa tersimpan di cloud` };
   } catch (err: any) {
     return { success: false, message: `Gagal mengirim siswa ke cloud: ${err.message || String(err)}` };
   }
@@ -424,17 +439,19 @@ export async function saveDocumentToHosting(doc: StudentDocument): Promise<{ suc
       }),
     });
 
-    if (!response.ok) {
+    let data: any = null;
+    if (response.ok) {
+      try {
+        data = await response.json();
+      } catch {}
+    }
+
+    if (!response.ok || !data || !data.success) {
       return await pushDocumentsToHosting([doc]);
     }
 
-    const data = await response.json();
-    if (data.success) {
-      markDocumentsAsSynced([doc.id]);
-      return { success: true, message: data.message || `Dokumen ${doc.title} tersimpan di cloud` };
-    } else {
-      return await pushDocumentsToHosting([doc]);
-    }
+    markDocumentsAsSynced([doc.id]);
+    return { success: true, message: data.message || `Dokumen ${doc.title} tersimpan di cloud` };
   } catch {
     try {
       return await pushDocumentsToHosting([doc]);
@@ -467,7 +484,14 @@ export async function pushDocumentsToHosting(documents: StudentDocument[]): Prom
       }),
     });
 
-    if (!response.ok) {
+    let data: any = null;
+    if (response.ok) {
+      try {
+        data = await response.json();
+      } catch {}
+    }
+
+    if (!response.ok || !data || !data.success) {
       // Fallback to push_all
       const fallbackUrl = new URL(config.apiUrl);
       fallbackUrl.searchParams.set('action', 'push_all');
@@ -494,12 +518,8 @@ export async function pushDocumentsToHosting(documents: StudentDocument[]): Prom
       return { success: false, message: fbData.error || fbData.message || 'Gagal menyimpan dokumen' };
     }
 
-    const data = await response.json();
-    if (data.success) {
-      markDocumentsAsSynced(documents.map((d) => d.id));
-      return { success: true, message: data.message || `${documents.length} dokumen tersimpan di cloud` };
-    }
-    return { success: false, message: data.error || data.message || 'Gagal menyimpan dokumen' };
+    markDocumentsAsSynced(documents.map((d) => d.id));
+    return { success: true, message: data.message || `${documents.length} dokumen tersimpan di cloud` };
   } catch (err: any) {
     return { success: false, message: `Gagal mengirim dokumen ke cloud: ${err.message || String(err)}` };
   }
@@ -1165,11 +1185,11 @@ function handleTest($pdo) {
         $pdo->exec("DELETE FROM \`arsip_documents\` WHERE \`student_id\` NOT IN (SELECT \`id\` FROM \`arsip_students\`)");
     } catch (Exception $e) {}
 
-    $stmt1 = $pdo->query("SELECT COUNT(*) AS total FROM \`arsip_students\`");
-    $totalStudents = (int)$stmt1->fetchColumn();
+    $stmt1 = $pdo->query("SELECT COUNT(*) AS total, MAX(\`updated_at\`) AS last_updated FROM \`arsip_students\`");
+    $sInfo = $stmt1->fetch();
 
-    $stmt2 = $pdo->query("SELECT COUNT(*) AS total FROM \`arsip_documents\`");
-    $totalDocs = (int)$stmt2->fetchColumn();
+    $stmt2 = $pdo->query("SELECT COUNT(*) AS total, MAX(\`upload_date\`) AS last_doc FROM \`arsip_documents\`");
+    $dInfo = $stmt2->fetch();
 
     $stmt3 = $pdo->query("SELECT COUNT(*) AS total FROM \`arsip_academic_years\`");
     $totalYears = (int)$stmt3->fetchColumn();
@@ -1179,10 +1199,12 @@ function handleTest($pdo) {
         'message' => 'Terhubung dengan Database MySQL Rumahweb!',
         'server_time' => date('Y-m-d H:i:s'),
         'counts' => [
-            'students' => $totalStudents,
-            'documents' => $totalDocs,
+            'students' => (int)($sInfo['total'] ?? 0),
+            'documents' => (int)($dInfo['total'] ?? 0),
             'academicYears' => $totalYears
-        ]
+        ],
+        'lastStudentUpdate' => $sInfo['last_updated'] ?? '',
+        'lastDocUpdate' => $dInfo['last_doc'] ?? '',
     ]);
 }
 
