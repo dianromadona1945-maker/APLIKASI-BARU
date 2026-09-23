@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   initializeStorage,
   getStudents,
@@ -107,6 +107,103 @@ export default function App() {
 
   // Toast feedback
   const [toastMessage, setToastMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Auto-logout jika tidak ada aktivitas (15 menit)
+  const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000;
+  const [autoLogoutNotice, setAutoLogoutNotice] = useState<string | null>(null);
+  const lastActivityRef = useRef<number>(Date.now());
+  const activityThrottleRef = useRef<number>(0);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    // Set initial activity time
+    const initialTime = Date.now();
+    lastActivityRef.current = initialTime;
+    try {
+      localStorage.setItem('arsip_last_active_time', String(initialTime));
+    } catch {}
+
+    const handleUserActivity = () => {
+      const now = Date.now();
+      // Throttle agar tidak membebani CPU (maksimal sekali per 2 detik)
+      if (now - activityThrottleRef.current > 2000) {
+        activityThrottleRef.current = now;
+        lastActivityRef.current = now;
+        try {
+          localStorage.setItem('arsip_last_active_time', String(now));
+        } catch {}
+      }
+    };
+
+    const userEvents = ['mousedown', 'mousemove', 'keydown', 'touchstart', 'scroll', 'click'];
+    userEvents.forEach((evt) => {
+      window.addEventListener(evt, handleUserActivity, { passive: true });
+    });
+
+    const triggerAutoLogout = (reason: string) => {
+      logoutUser();
+      setIsAuthenticated(false);
+      const notice = 'Sesi Anda telah berakhir secara otomatis karena tidak ada aktivitas selama 15 menit. Silakan masuk kembali demi keamanan data arsip.';
+      setAutoLogoutNotice(notice);
+      addAuditLog('LOGOUT', `Sesi otomatis ditutup (Auto-Logout) karena tidak ada aktivitas (${reason}).`);
+      showToast('Sesi otomatis berakhir karena tidak ada aktivitas selama 15 menit.', 'error');
+    };
+
+    // Pengecekan berkala setiap 5 detik
+    const idleCheckInterval = setInterval(() => {
+      const now = Date.now();
+      let lastTime = lastActivityRef.current;
+      try {
+        const stored = localStorage.getItem('arsip_last_active_time');
+        if (stored) {
+          const parsed = Number(stored);
+          if (!isNaN(parsed) && parsed > lastTime) {
+            lastTime = parsed;
+            lastActivityRef.current = parsed;
+          }
+        }
+      } catch {}
+
+      if (now - lastTime >= INACTIVITY_TIMEOUT_MS) {
+        triggerAutoLogout('15 menit inaktif');
+      }
+    }, 5000);
+
+    // Pengecekan saat tab atau layar kembali aktif (misal laptop baru dibuka/kembali ke tab)
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        const now = Date.now();
+        let lastTime = lastActivityRef.current;
+        try {
+          const stored = localStorage.getItem('arsip_last_active_time');
+          if (stored) {
+            const parsed = Number(stored);
+            if (!isNaN(parsed) && parsed > lastTime) {
+              lastTime = parsed;
+              lastActivityRef.current = parsed;
+            }
+          }
+        } catch {}
+
+        if (now - lastTime >= INACTIVITY_TIMEOUT_MS) {
+          triggerAutoLogout('inaktif saat layar tidak aktif');
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleVisibilityChange);
+
+    return () => {
+      userEvents.forEach((evt) => {
+        window.removeEventListener(evt, handleUserActivity);
+      });
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleVisibilityChange);
+      clearInterval(idleCheckInterval);
+    };
+  }, [isAuthenticated]);
 
   const showToast = (text: string, type: 'success' | 'error' = 'success') => {
     setToastMessage({ text, type });
@@ -355,6 +452,11 @@ export default function App() {
 
   // Authentication Handlers
   const handleLoginSuccess = (user: User) => {
+    setAutoLogoutNotice(null);
+    lastActivityRef.current = Date.now();
+    try {
+      localStorage.setItem('arsip_last_active_time', String(Date.now()));
+    } catch {}
     setCurrentUserState(user);
     setIsAuthenticated(true);
     refreshAllData();
@@ -368,6 +470,7 @@ export default function App() {
   };
 
   const handleLogout = () => {
+    setAutoLogoutNotice(null);
     logoutUser();
     setIsAuthenticated(false);
     showToast('Anda telah berhasil keluar dari sistem.', 'success');
@@ -592,7 +695,7 @@ export default function App() {
 
       {/* If user is not authenticated, display the dedicated Login Portal */}
       {!isAuthenticated ? (
-        <LoginView onLoginSuccess={handleLoginSuccess} />
+        <LoginView onLoginSuccess={handleLoginSuccess} noticeMessage={autoLogoutNotice} />
       ) : (
         <div className="min-h-screen bg-slate-50 flex flex-col">
           {/* Sidebar Navigation on the Left */}

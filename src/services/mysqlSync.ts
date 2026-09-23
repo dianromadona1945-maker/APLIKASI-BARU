@@ -1677,8 +1677,8 @@ function handlePushAll($pdo, $body) {
 }
 
 function handlePullAll($pdo) {
-    // Ambil semua data siswa
-    $stmt1 = $pdo->query("SELECT * FROM \`arsip_students\` ORDER BY \`institution\` ASC, \`name\` ASC");
+    // Ambil semua data siswa (data terbaru yang ditambahkan berada di paling atas)
+    $stmt1 = $pdo->query("SELECT * FROM \`arsip_students\` ORDER BY \`created_at\` DESC, \`id\` DESC");
     $rawStudents = $stmt1->fetchAll();
 
     $students = [];

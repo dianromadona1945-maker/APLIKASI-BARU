@@ -11,15 +11,17 @@ import {
   CheckCircle2,
   AlertCircle,
   FileCheck2,
+  Clock,
 } from 'lucide-react';
 import { User, UserRole } from '../types';
 import { loginUser } from '../services/storage';
 
 interface LoginViewProps {
   onLoginSuccess: (user: User) => void;
+  noticeMessage?: string | null;
 }
 
-export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
+export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, noticeMessage }) => {
   const [selectedRole, setSelectedRole] = useState<UserRole>('admin');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -185,6 +187,17 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
                   <span>Petugas Tata Usaha (TU)</span>
                 </button>
               </div>
+
+              {/* Auto-logout / Security Notice if any */}
+              {noticeMessage && (
+                <div className="mb-4 p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs font-medium flex items-start gap-2.5 shadow-xs animate-fadeIn">
+                  <Clock className="w-4 h-4 shrink-0 text-amber-600 mt-0.5" />
+                  <div className="flex-1">
+                    <span className="font-bold block text-amber-800">Sesi Berakhir Otomatis</span>
+                    <span className="text-amber-700">{noticeMessage}</span>
+                  </div>
+                </div>
+              )}
 
               {/* Alert error if any */}
               {errorMessage && (

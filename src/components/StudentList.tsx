@@ -16,6 +16,9 @@ import {
   Archive,
   Calendar,
   School,
+  ArrowUpDown,
+  ArrowUpAZ,
+  ArrowDownZA,
 } from 'lucide-react';
 import { Student, StudentDocument, DocumentType, UserRole, InstitutionLevel } from '../types';
 import { calculateCompleteness, getAcademicYears, parseInstitution, extractYearCycle } from '../services/storage';
@@ -52,6 +55,7 @@ export const StudentList: React.FC<StudentListProps> = ({
   const [selectedInstitution, setSelectedInstitution] = useState<'ALL' | InstitutionLevel>('ALL');
   const [selectedYear, setSelectedYear] = useState('Semua Tahun Pelajaran');
   const [statusFilter, setStatusFilter] = useState<'Semua' | 'Lengkap' | 'Belum Lengkap' | 'Kosong'>('Semua');
+  const [nameSort, setNameSort] = useState<'none' | 'asc' | 'desc'>('none');
   const [academicYears, setAcademicYears] = useState<string[]>([]);
   const [isManageYearsOpen, setIsManageYearsOpen] = useState(false);
 
@@ -66,6 +70,14 @@ export const StudentList: React.FC<StudentListProps> = ({
   const handleYearsUpdated = (updatedYears: string[]) => {
     setAcademicYears(updatedYears);
     if (onYearsUpdated) onYearsUpdated(updatedYears);
+  };
+
+  const toggleNameSort = () => {
+    setNameSort((prev) => {
+      if (prev === 'none') return 'asc';
+      if (prev === 'asc') return 'desc';
+      return 'none';
+    });
   };
 
   // Filtered academic years for the dropdown based on selected institution
@@ -169,17 +181,61 @@ export const StudentList: React.FC<StudentListProps> = ({
     }
 
     return deduplicated.sort((a, b) => {
-      const q = rawQuery;
-      if (!q) return 0;
-      const aName = (a.name || '').toLowerCase();
-      const bName = (b.name || '').toLowerCase();
-      if (aName === q && bName !== q) return -1;
-      if (bName === q && aName !== q) return 1;
-      if (aName.startsWith(q) && !bName.startsWith(q)) return -1;
-      if (bName.startsWith(q) && !aName.startsWith(q)) return 1;
+      // 1. Urutkan berdasarkan Abjad jika filter anak panah aktif
+      if (nameSort === 'asc') {
+        const comp = (a.name || '').localeCompare(b.name || '', 'id', { sensitivity: 'base' });
+        if (comp !== 0) return comp;
+      } else if (nameSort === 'desc') {
+        const comp = (b.name || '').localeCompare(a.name || '', 'id', { sensitivity: 'base' });
+        if (comp !== 0) return comp;
+      }
+
+      // 2. Prioritas pencarian teks jika ada query
+      if (rawQuery) {
+        const aName = (a.name || '').toLowerCase();
+        const bName = (b.name || '').toLowerCase();
+        if (aName === rawQuery && bName !== rawQuery) return -1;
+        if (bName === rawQuery && aName !== rawQuery) return 1;
+        if (aName.startsWith(rawQuery) && !bName.startsWith(rawQuery)) return -1;
+        if (bName.startsWith(rawQuery) && !aName.startsWith(rawQuery)) return 1;
+      }
+
+      // 3. Bawaan (jika tidak filter abjad): Data yang pertama itu data yang terakhir kali ditambahkan (Newest first)
+      if (nameSort === 'none') {
+        const parseTime = (s: Student): number => {
+          if (s.createdAt) {
+            const t = new Date(s.createdAt).getTime();
+            if (!isNaN(t) && t > 0) return t;
+          }
+          if (s.updatedAt) {
+            const t = new Date(s.updatedAt).getTime();
+            if (!isNaN(t) && t > 0) return t;
+          }
+          const m = s.id?.match(/\d{10,14}/);
+          if (m) {
+            const t = Number(m[0]);
+            if (!isNaN(t) && t > 0) return t;
+          }
+          return 0;
+        };
+
+        const timeA = parseTime(a);
+        const timeB = parseTime(b);
+        if (timeB !== timeA && timeA > 0 && timeB > 0) {
+          return timeB - timeA;
+        }
+
+        // Jika timestamp tidak tersedia atau sama, gunakan urutan penyimpanan (storage unshift menempatkan yang baru di awal)
+        const idxA = students.findIndex((s) => s.id === a.id);
+        const idxB = students.findIndex((s) => s.id === b.id);
+        if (idxA !== -1 && idxB !== -1) {
+          return idxA - idxB;
+        }
+      }
+
       return 0;
     });
-  }, [students, documents, searchTerm, selectedInstitution, selectedYear, statusFilter]);
+  }, [students, documents, searchTerm, selectedInstitution, selectedYear, statusFilter, nameSort]);
 
   // Export CSV function
   const handleExportCsv = () => {
@@ -426,7 +482,59 @@ export const StudentList: React.FC<StudentListProps> = ({
             <option value="Kosong">Tanpa Dokumen</option>
           </select>
         </div>
+
+        {/* Filter / Urutan Siswa (Bawaan: Terbaru Ditambahkan, atau Abjad A-Z / Z-A) */}
+        <div className="w-full md:w-56">
+          <div className="relative">
+            <select
+              value={nameSort}
+              onChange={(e) => setNameSort(e.target.value as 'none' | 'asc' | 'desc')}
+              aria-label="Urutan data siswa"
+              className="w-full py-2 pl-9 pr-3 text-xs sm:text-sm bg-slate-50 hover:bg-slate-100/70 rounded-xl border border-slate-200 text-slate-700 focus:outline-hidden focus:ring-2 focus:ring-blue-500 font-semibold cursor-pointer"
+            >
+              <option value="none">🕒 Terbaru (Bawaan)</option>
+              <option value="asc">🔤 Abjad: A → Z (Menaik)</option>
+              <option value="desc">🔤 Abjad: Z → A (Menurun)</option>
+            </select>
+            <div className="absolute left-3 top-2.5 pointer-events-none text-slate-500">
+              {nameSort === 'asc' ? (
+                <ArrowUpAZ className="w-4 h-4 text-blue-600" />
+              ) : nameSort === 'desc' ? (
+                <ArrowDownZA className="w-4 h-4 text-blue-600" />
+              ) : (
+                <ArrowUpDown className="w-4 h-4 text-slate-400" />
+              )}
+            </div>
+          </div>
+        </div>
       </div>
+
+      {/* Info Urutan Aktif jika sedang menggunakan filter abjad */}
+      {nameSort !== 'none' && (
+        <div className="flex items-center justify-between px-4 py-2 rounded-xl bg-blue-50 border border-blue-200 text-blue-800 text-xs font-semibold">
+          <div className="flex items-center gap-2">
+            {nameSort === 'asc' ? (
+              <ArrowUpAZ className="w-4 h-4 text-blue-600 shrink-0" />
+            ) : (
+              <ArrowDownZA className="w-4 h-4 text-blue-600 shrink-0" />
+            )}
+            <span>
+              Urutan Aktif:{' '}
+              <strong className="text-blue-900 font-black">
+                {nameSort === 'asc' ? 'Abjad A ke Z (Menaik)' : 'Abjad Z ke A (Menurun)'}
+              </strong>
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setNameSort('none')}
+            className="px-2.5 py-1 text-[11px] font-bold text-blue-700 hover:text-blue-900 bg-white hover:bg-blue-100 rounded-lg border border-blue-200 transition cursor-pointer"
+            title="Kembali ke urutan data terbaru ditambahkan"
+          >
+            Kembalikan ke Terbaru Ditambahkan
+          </button>
+        </div>
+      )}
 
       {/* Student Table */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
@@ -434,7 +542,42 @@ export const StudentList: React.FC<StudentListProps> = ({
           <table className="w-full text-left border-collapse text-xs sm:text-sm">
             <thead>
               <tr className="bg-slate-50/80 border-b border-slate-200 text-[11px] font-extrabold uppercase tracking-wider text-slate-500">
-                <th className="py-3.5 px-4">Identitas Siswa</th>
+                <th
+                  onClick={toggleNameSort}
+                  title="Klik untuk mengubah urutan abjad siswa (A-Z / Z-A / Bawaan: Terbaru Ditambahkan)"
+                  className="py-3.5 px-4 cursor-pointer hover:bg-blue-50/60 transition select-none group/th"
+                >
+                  <div className="flex items-center gap-1.5">
+                    <span className={nameSort !== 'none' ? 'text-blue-700 font-black' : ''}>
+                      Identitas Siswa
+                    </span>
+                    <span
+                      className={`inline-flex items-center justify-center p-1 rounded-md transition ${
+                        nameSort === 'none'
+                          ? 'text-slate-400 group-hover/th:text-blue-600 group-hover/th:bg-blue-100/60'
+                          : 'text-blue-700 bg-blue-100 font-black shadow-2xs'
+                      }`}
+                    >
+                      {nameSort === 'asc' ? (
+                        <ArrowUpAZ className="w-4 h-4 text-blue-700" />
+                      ) : nameSort === 'desc' ? (
+                        <ArrowDownZA className="w-4 h-4 text-blue-700" />
+                      ) : (
+                        <ArrowUpDown className="w-3.5 h-3.5" />
+                      )}
+                    </span>
+                    {nameSort === 'asc' && (
+                      <span className="text-[10px] uppercase font-bold text-blue-700 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded-md">
+                        A-Z
+                      </span>
+                    )}
+                    {nameSort === 'desc' && (
+                      <span className="text-[10px] uppercase font-bold text-blue-700 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded-md">
+                        Z-A
+                      </span>
+                    )}
+                  </div>
+                </th>
                 <th className="py-3.5 px-4">Lembaga</th>
                 <th className="py-3.5 px-4">NIS / NISN</th>
                 <th className="py-3.5 px-4">
