@@ -1,4 +1,12 @@
 import { Student, StudentDocument, AuditLog, User } from '../types';
+import {
+  smartMergeRemoteData,
+  getStudents,
+  getDocuments,
+  getAcademicYears,
+  getDeletedStudentIds,
+  markStudentsAsSynced,
+} from './storage';
 
 export interface RumahwebSyncConfig {
   apiUrl: string;
@@ -90,11 +98,11 @@ export async function checkServerSyncStatus(): Promise<{
   }
 
   try {
-    const url = new URL(config.apiUrl);
-    // Coba action check_sync terlebih dahulu
-    url.searchParams.set('action', 'check_sync');
+    const cleanUrl = config.apiUrl.trim();
+    const url = new URL(cleanUrl);
+    url.searchParams.set('action', 'test');
 
-    let response = await fetch(url.toString(), {
+    const response = await fetch(url.toString(), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -103,26 +111,16 @@ export async function checkServerSyncStatus(): Promise<{
       body: JSON.stringify({ key: config.syncKey.trim() }),
     });
 
-    // Jika server script belum diperbarui (404/unknown action), fallback ke 'test'
-    if (!response.ok) {
-      const fallbackUrl = new URL(config.apiUrl);
-      fallbackUrl.searchParams.set('action', 'test');
-      response = await fetch(fallbackUrl.toString(), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Sync-Key': config.syncKey.trim(),
-        },
-        body: JSON.stringify({ key: config.syncKey.trim() }),
-      });
-    }
-
     if (!response.ok) {
       return { success: false, error: `HTTP ${response.status}` };
     }
 
     const data = await response.json();
     if (data.success) {
+      saveSyncConfig({
+        lastSyncStatus: 'success',
+        serverCounts: data.counts,
+      });
       return {
         success: true,
         counts: data.counts,
@@ -232,6 +230,220 @@ export async function deleteStudentFromHosting(studentId: string): Promise<{ suc
   }
 }
 
+export async function saveStudentToHosting(student: Student): Promise<{ success: boolean; message: string }> {
+  const config = getSyncConfig();
+  if (!config.apiUrl) {
+    return { success: false, message: 'URL API belum dikonfigurasi' };
+  }
+  try {
+    const url = new URL(config.apiUrl);
+    url.searchParams.set('action', 'save_student');
+    const response = await fetch(url.toString(), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Sync-Key': config.syncKey.trim(),
+      },
+      body: JSON.stringify({
+        key: config.syncKey.trim(),
+        student,
+      }),
+    });
+
+    if (!response.ok) {
+      // Fallback: If server has older api.php without 'save_student', fallback to pushStudentsToHosting
+      return await pushStudentsToHosting([student]);
+    }
+
+    const data = await response.json();
+    if (data.success) {
+      markStudentsAsSynced([student.id]);
+      return { success: true, message: data.message || `Siswa ${student.name} berhasil disimpan di cloud` };
+    } else {
+      return await pushStudentsToHosting([student]);
+    }
+  } catch {
+    try {
+      return await pushStudentsToHosting([student]);
+    } catch (fallbackErr: any) {
+      return { success: false, message: fallbackErr.message || String(fallbackErr) };
+    }
+  }
+}
+
+export async function pushStudentsToHosting(students: Student[]): Promise<{ success: boolean; message: string }> {
+  const config = getSyncConfig();
+  if (!config.apiUrl) {
+    return { success: false, message: 'URL API belum dikonfigurasi' };
+  }
+  if (students.length === 0) {
+    return { success: true, message: 'Tidak ada data siswa untuk dikirim' };
+  }
+  try {
+    const url = new URL(config.apiUrl);
+    url.searchParams.set('action', 'push_students');
+    const response = await fetch(url.toString(), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Sync-Key': config.syncKey.trim(),
+      },
+      body: JSON.stringify({
+        key: config.syncKey.trim(),
+        students,
+      }),
+    });
+
+    if (!response.ok) {
+      // Fallback to push_all with mirror: false (NON-DESTRUCTIVE: NEVER deletes existing server data)
+      const fallbackUrl = new URL(config.apiUrl);
+      fallbackUrl.searchParams.set('action', 'push_all');
+      const fallbackRes = await fetch(fallbackUrl.toString(), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Sync-Key': config.syncKey.trim(),
+        },
+        body: JSON.stringify({
+          key: config.syncKey.trim(),
+          students,
+          documents: [],
+          academicYears: [],
+          mirror: false,
+        }),
+      });
+      if (!fallbackRes.ok) throw new Error(`HTTP ${fallbackRes.status}`);
+      const fbData = await fallbackRes.json();
+      if (fbData.success) {
+        markStudentsAsSynced(students.map((s) => s.id));
+        return { success: true, message: fbData.message || `${students.length} siswa tersimpan di cloud` };
+      }
+      return { success: false, message: fbData.error || fbData.message || 'Gagal menyimpan siswa' };
+    }
+
+    const data = await response.json();
+    if (data.success) {
+      markStudentsAsSynced(students.map((s) => s.id));
+      return { success: true, message: data.message || `${students.length} siswa tersimpan di cloud` };
+    }
+    return { success: false, message: data.error || data.message || 'Gagal menyimpan siswa' };
+  } catch (err: any) {
+    return { success: false, message: `Gagal mengirim siswa ke cloud: ${err.message || String(err)}` };
+  }
+}
+
+export async function executeTwoWaySync(): Promise<{
+  success: boolean;
+  message: string;
+  pushedCount: number;
+  pulledCount: number;
+  totalStudents: number;
+}> {
+  const config = getSyncConfig();
+  if (!config.apiUrl) {
+    return {
+      success: false,
+      message: 'URL API MySQL Rumahweb belum dikonfigurasi.',
+      pushedCount: 0,
+      pulledCount: 0,
+      totalStudents: getStudents().length,
+    };
+  }
+
+  if (isSyncInProgress) {
+    return {
+      success: false,
+      message: 'Sinkronisasi lain sedang berjalan, silakan tunggu sesaat.',
+      pushedCount: 0,
+      pulledCount: 0,
+      totalStudents: getStudents().length,
+    };
+  }
+
+  isSyncInProgress = true;
+  saveSyncConfig({ lastSyncStatus: 'syncing', lastSyncMessage: 'Sedang melakukan sinkronisasi dua arah (Smart Merge)...' });
+
+  try {
+    // 1. Pull data from server
+    const pullUrl = new URL(config.apiUrl);
+    pullUrl.searchParams.set('action', 'pull_all');
+    const response = await fetch(pullUrl.toString(), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Sync-Key': config.syncKey.trim(),
+      },
+      body: JSON.stringify({ key: config.syncKey.trim() }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Gagal terhubung ke cloud (HTTP ${response.status})`);
+    }
+
+    const pullResult = await response.json();
+    if (!pullResult.success || !pullResult.data) {
+      throw new Error(pullResult.error || pullResult.message || 'Gagal membaca data dari cloud');
+    }
+
+    // 2. Perform safe Bidirectional Smart Merge locally (never loses newly added students!)
+    const mergeResult = smartMergeRemoteData(pullResult.data);
+
+    // 3. Delete any records on cloud that were marked deleted locally
+    if (mergeResult.deletedToSync && mergeResult.deletedToSync.length > 0) {
+      for (const delId of mergeResult.deletedToSync) {
+        deleteStudentFromHosting(delId).catch(() => {});
+      }
+    }
+
+    // 4. Push local additions/updates to cloud
+    let pushedCount = 0;
+    if (mergeResult.studentsToPush && mergeResult.studentsToPush.length > 0) {
+      const pushRes = await pushStudentsToHosting(mergeResult.studentsToPush);
+      if (pushRes.success) {
+        pushedCount = mergeResult.studentsToPush.length;
+        markStudentsAsSynced(mergeResult.studentsToPush.map((s) => s.id));
+      }
+    }
+
+    const now = new Date().toISOString();
+    saveLastKnownSyncTimestamp(now);
+    const msg = `Sinkronisasi aman: ${mergeResult.mergedStudents.length} siswa diselaraskan (${pushedCount} dikirim, ${mergeResult.remoteStudentsAddedOrUpdated} baru ditarik)`;
+    saveSyncConfig({
+      lastSyncStatus: 'success',
+      lastSyncTime: now,
+      lastSyncMessage: msg,
+      serverCounts: {
+        students: mergeResult.mergedStudents.length,
+        documents: getDocuments().length,
+        academicYears: getAcademicYears().length,
+      },
+    });
+
+    return {
+      success: true,
+      message: msg,
+      pushedCount,
+      pulledCount: mergeResult.remoteStudentsAddedOrUpdated,
+      totalStudents: mergeResult.mergedStudents.length,
+    };
+  } catch (err: any) {
+    const errMsg = `Gagal sinkronisasi: ${err.message || String(err)}`;
+    saveSyncConfig({
+      lastSyncStatus: 'error',
+      lastSyncMessage: errMsg,
+    });
+    return {
+      success: false,
+      message: errMsg,
+      pushedCount: 0,
+      pulledCount: 0,
+      totalStudents: getStudents().length,
+    };
+  } finally {
+    isSyncInProgress = false;
+  }
+}
+
 export async function pushAllDataToHosting(payload: {
   students: Student[];
   documents: StudentDocument[];
@@ -263,7 +475,8 @@ export async function pushAllDataToHosting(payload: {
         documents: payload.documents,
         academicYears: payload.academicYears,
         logs: payload.logs || [],
-        mirror: payload.mirror !== false,
+        deletedIds: getDeletedStudentIds(),
+        mirror: payload.mirror === true, // Default to FALSE to prevent destructive deletion
       }),
     });
 
@@ -274,6 +487,7 @@ export async function pushAllDataToHosting(payload: {
     const result = await response.json();
     if (result.success) {
       const now = new Date().toISOString();
+      markStudentsAsSynced(payload.students.map((s) => s.id));
       saveLastKnownSyncTimestamp(now);
       saveSyncConfig({
         lastSyncStatus: 'success',
@@ -496,6 +710,14 @@ switch ($action) {
         handleTest($pdo);
         break;
 
+    case 'save_student':
+        handleSaveStudent($pdo, $body);
+        break;
+
+    case 'push_students':
+        handlePushStudents($pdo, $body);
+        break;
+
     case 'push_all':
         handlePushAll($pdo, $body);
         break;
@@ -601,27 +823,165 @@ function handleTest($pdo) {
     ]);
 }
 
+function handleSaveStudent($pdo, $body) {
+    $student = isset($body['student']) && is_array($body['student']) ? $body['student'] : null;
+    if (!$student || empty($student['id'])) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'error' => 'Data siswa tidak valid atau ID kosong']);
+        return;
+    }
+
+    try {
+        $stmt = $pdo->prepare("INSERT INTO \`arsip_students\` (
+            \`id\`, \`name\`, \`nis\`, \`nisn\`, \`nik\`, \`institution\`, \`academic_year\`, \`class_room\`,
+            \`birth_place\`, \`birth_date\`, \`gender\`, \`address\`, \`parent_name\`, \`parent_phone\`,
+            \`status\`, \`raw_json\`, \`created_at\`, \`updated_at\`
+        ) VALUES (
+            :id, :name, :nis, :nisn, :nik, :institution, :academic_year, :class_room,
+            :birth_place, :birth_date, :gender, :address, :parent_name, :parent_phone,
+            :status, :raw_json, :created_at, :updated_at
+        ) ON DUPLICATE KEY UPDATE
+            \`name\` = VALUES(\`name\`),
+            \`nis\` = VALUES(\`nis\`),
+            \`nisn\` = VALUES(\`nisn\`),
+            \`nik\` = VALUES(\`nik\`),
+            \`institution\` = VALUES(\`institution\`),
+            \`academic_year\` = VALUES(\`academic_year\`),
+            \`class_room\` = VALUES(\`class_room\`),
+            \`birth_place\` = VALUES(\`birth_place\`),
+            \`birth_date\` = VALUES(\`birth_date\`),
+            \`gender\` = VALUES(\`gender\`),
+            \`address\` = VALUES(\`address\`),
+            \`parent_name\` = VALUES(\`parent_name\`),
+            \`parent_phone\` = VALUES(\`parent_phone\`),
+            \`status\` = VALUES(\`status\`),
+            \`raw_json\` = VALUES(\`raw_json\`),
+            \`updated_at\` = VALUES(\`updated_at\`)");
+
+        $stmt->execute([
+            ':id' => $student['id'],
+            ':name' => $student['name'] ?? '',
+            ':nis' => $student['nis'] ?? '',
+            ':nisn' => $student['nisn'] ?? '',
+            ':nik' => $student['nik'] ?? '',
+            ':institution' => $student['institution'] ?? 'SMP',
+            ':academic_year' => $student['academicYear'] ?? '',
+            ':class_room' => $student['classRoom'] ?? '',
+            ':birth_place' => $student['birthPlace'] ?? '',
+            ':birth_date' => $student['birthDate'] ?? '',
+            ':gender' => $student['gender'] ?? 'L',
+            ':address' => $student['address'] ?? '',
+            ':parent_name' => $student['parentName'] ?? '',
+            ':parent_phone' => $student['parentPhone'] ?? '',
+            ':status' => $student['status'] ?? 'Aktif',
+            ':raw_json' => json_encode($student),
+            ':created_at' => $student['createdAt'] ?? date('c'),
+            ':updated_at' => $student['updatedAt'] ?? date('c'),
+        ]);
+
+        echo json_encode([
+            'success' => true,
+            'message' => 'Siswa ' . ($student['name'] ?? '') . ' berhasil disimpan di MySQL cloud.',
+            'studentId' => $student['id']
+        ]);
+    } catch (Exception $e) {
+        http_response_code(500);
+        echo json_encode(['success' => false, 'error' => 'Gagal menyimpan siswa: ' . $e->getMessage()]);
+    }
+}
+
+function handlePushStudents($pdo, $body) {
+    $students = isset($body['students']) && is_array($body['students']) ? $body['students'] : [];
+    if (empty($students)) {
+        echo json_encode(['success' => true, 'message' => 'Tidak ada siswa yang dikirim']);
+        return;
+    }
+
+    $pdo->beginTransaction();
+    try {
+        $stmt = $pdo->prepare("INSERT INTO \`arsip_students\` (
+            \`id\`, \`name\`, \`nis\`, \`nisn\`, \`nik\`, \`institution\`, \`academic_year\`, \`class_room\`,
+            \`birth_place\`, \`birth_date\`, \`gender\`, \`address\`, \`parent_name\`, \`parent_phone\`,
+            \`status\`, \`raw_json\`, \`created_at\`, \`updated_at\`
+        ) VALUES (
+            :id, :name, :nis, :nisn, :nik, :institution, :academic_year, :class_room,
+            :birth_place, :birth_date, :gender, :address, :parent_name, :parent_phone,
+            :status, :raw_json, :created_at, :updated_at
+        ) ON DUPLICATE KEY UPDATE
+            \`name\` = VALUES(\`name\`),
+            \`nis\` = VALUES(\`nis\`),
+            \`nisn\` = VALUES(\`nisn\`),
+            \`nik\` = VALUES(\`nik\`),
+            \`institution\` = VALUES(\`institution\`),
+            \`academic_year\` = VALUES(\`academic_year\`),
+            \`class_room\` = VALUES(\`class_room\`),
+            \`birth_place\` = VALUES(\`birth_place\`),
+            \`birth_date\` = VALUES(\`birth_date\`),
+            \`gender\` = VALUES(\`gender\`),
+            \`address\` = VALUES(\`address\`),
+            \`parent_name\` = VALUES(\`parent_name\`),
+            \`parent_phone\` = VALUES(\`parent_phone\`),
+            \`status\` = VALUES(\`status\`),
+            \`raw_json\` = VALUES(\`raw_json\`),
+            \`updated_at\` = VALUES(\`updated_at\`)");
+
+        foreach ($students as $s) {
+            $stmt->execute([
+                ':id' => $s['id'],
+                ':name' => $s['name'] ?? '',
+                ':nis' => $s['nis'] ?? '',
+                ':nisn' => $s['nisn'] ?? '',
+                ':nik' => $s['nik'] ?? '',
+                ':institution' => $s['institution'] ?? 'SMP',
+                ':academic_year' => $s['academicYear'] ?? '',
+                ':class_room' => $s['classRoom'] ?? '',
+                ':birth_place' => $s['birthPlace'] ?? '',
+                ':birth_date' => $s['birthDate'] ?? '',
+                ':gender' => $s['gender'] ?? 'L',
+                ':address' => $s['address'] ?? '',
+                ':parent_name' => $s['parentName'] ?? '',
+                ':parent_phone' => $s['parentPhone'] ?? '',
+                ':status' => $s['status'] ?? 'Aktif',
+                ':raw_json' => json_encode($s),
+                ':created_at' => $s['createdAt'] ?? date('c'),
+                ':updated_at' => $s['updatedAt'] ?? date('c'),
+            ]);
+        }
+
+        $pdo->commit();
+        echo json_encode([
+            'success' => true,
+            'message' => 'Berhasil menyimpan ' . count($students) . ' data siswa ke cloud.',
+            'count' => count($students)
+        ]);
+    } catch (Exception $e) {
+        $pdo->rollBack();
+        http_response_code(500);
+        echo json_encode(['success' => false, 'error' => 'Gagal menyimpan siswa: ' . $e->getMessage()]);
+    }
+}
+
 function handlePushAll($pdo, $body) {
     $students = isset($body['students']) && is_array($body['students']) ? $body['students'] : [];
     $documents = isset($body['documents']) && is_array($body['documents']) ? $body['documents'] : [];
     $academicYears = isset($body['academicYears']) && is_array($body['academicYears']) ? $body['academicYears'] : [];
     $logs = isset($body['logs']) && is_array($body['logs']) ? $body['logs'] : [];
-    $mirror = isset($body['mirror']) ? (bool)$body['mirror'] : true;
+    $deletedIds = isset($body['deletedIds']) && is_array($body['deletedIds']) ? $body['deletedIds'] : [];
+    $mirror = isset($body['mirror']) ? (bool)$body['mirror'] : false;
 
     $pdo->beginTransaction();
 
     try {
-        // Jika mode mirror aktif dan ada data siswa yang dikirim:
-        // Hapus siswa di cloud yang sudah dihapus di PC lokal
-        if ($mirror && !empty($students)) {
-            $validIds = array_column($students, 'id');
-            if (!empty($validIds)) {
-                $placeholders = implode(',', array_fill(0, count($validIds), '?'));
-                $delStmt = $pdo->prepare("DELETE FROM \`arsip_students\` WHERE \`id\` NOT IN ($placeholders)");
-                $delStmt->execute($validIds);
+        // Hapus HANYA id siswa yang secara eksplisit dihapus (tombstone)
+        if (!empty($deletedIds)) {
+            $validDel = array_filter($deletedIds, function($id) { return !empty($id) && is_string($id); });
+            if (!empty($validDel)) {
+                $delPlaceholders = implode(',', array_fill(0, count($validDel), '?'));
+                $delStmt = $pdo->prepare("DELETE FROM \`arsip_students\` WHERE \`id\` IN ($delPlaceholders)");
+                $delStmt->execute(array_values($validDel));
 
-                // Hapus dokumen milik siswa yang sudah dihapus
-                $pdo->exec("DELETE FROM \`arsip_documents\` WHERE \`student_id\` NOT IN (SELECT \`id\` FROM \`arsip_students\`)");
+                $delDocStmt = $pdo->prepare("DELETE FROM \`arsip_documents\` WHERE \`student_id\` IN ($delPlaceholders)");
+                $delDocStmt->execute(array_values($validDel));
             }
         }
 

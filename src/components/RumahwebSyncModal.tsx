@@ -28,6 +28,7 @@ import {
   testRumahwebConnection,
   pushAllDataToHosting,
   pullAllDataFromHosting,
+  executeTwoWaySync,
   generatePhpApiScript,
   RumahwebSyncConfig,
 } from '../services/mysqlSync';
@@ -73,6 +74,7 @@ export const RumahwebSyncModal: React.FC<RumahwebSyncModalProps> = ({
   const [isTesting, setIsTesting] = useState<boolean>(false);
   const [isPushing, setIsPushing] = useState<boolean>(false);
   const [isPulling, setIsPulling] = useState<boolean>(false);
+  const [isSmartSyncing, setIsSmartSyncing] = useState<boolean>(false);
   const [statusMessage, setStatusMessage] = useState<{ text: string; isError?: boolean } | null>(null);
   const [copiedCode, setCopiedCode] = useState<boolean>(false);
 
@@ -84,6 +86,15 @@ export const RumahwebSyncModal: React.FC<RumahwebSyncModalProps> = ({
       setSyncKey(current.syncKey);
       setAutoSync(current.autoSync);
       setStatusMessage(null);
+
+      // Otomatis verifikasi koneksi saat modal dibuka
+      if (current.apiUrl) {
+        testRumahwebConnection(current.apiUrl, current.syncKey).then((res) => {
+          if (res.success) {
+            setConfig(getSyncConfig());
+          }
+        });
+      }
     }
   }, [isOpen]);
 
@@ -162,7 +173,32 @@ export const RumahwebSyncModal: React.FC<RumahwebSyncModalProps> = ({
     }
   };
 
-  // Handle Pull all data from Hosting to this PC
+  // Handle Two-Way Smart Merge (Bidirectional Sync)
+  const handleSmartSync = async () => {
+    if (!config.apiUrl) {
+      setActiveTab('config');
+      setStatusMessage({ text: 'Harap atur URL API Rumahweb terlebih dahulu.', isError: true });
+      return;
+    }
+
+    setIsSmartSyncing(true);
+    setStatusMessage({ text: 'Sedang menjalankan sinkronisasi cerdas dua arah (Smart Merge)...' });
+
+    const res = await executeTwoWaySync();
+    setIsSmartSyncing(false);
+
+    if (res.success) {
+      onDataSynced();
+      setConfig(getSyncConfig());
+      setStatusMessage({ text: res.message });
+      onToast(res.message, 'success');
+    } else {
+      setStatusMessage({ text: res.message, isError: true });
+      onToast(res.message, 'error');
+    }
+  };
+
+  // Handle Pull all data from Hosting to this PC (uses Smart Merge so local newly added data is NEVER lost)
   const handlePull = async () => {
     if (!config.apiUrl) {
       setActiveTab('config');
@@ -170,26 +206,17 @@ export const RumahwebSyncModal: React.FC<RumahwebSyncModalProps> = ({
       return;
     }
 
-    if (
-      !window.confirm(
-        'Tarik data terbaru dari database MySQL Rumahweb? Data di PC ini akan disinkronkan dengan data di hosting.'
-      )
-    ) {
-      return;
-    }
-
     setIsPulling(true);
-    setStatusMessage({ text: 'Sedang mengunduh data terbaru dari database MySQL Rumahweb...' });
+    setStatusMessage({ text: 'Sedang menyelaraskan data dengan database MySQL Rumahweb...' });
 
-    const res = await pullAllDataFromHosting();
+    const res = await executeTwoWaySync();
     setIsPulling(false);
 
-    if (res.success && res.data) {
-      applyRemoteSyncedData(res.data);
+    if (res.success) {
       onDataSynced();
       setConfig(getSyncConfig());
       setStatusMessage({ text: res.message });
-      onToast(`Sinkronisasi sukses! ${res.data.students.length} siswa berhasil dimuat.`, 'success');
+      onToast(res.message, 'success');
     } else {
       setStatusMessage({ text: res.message, isError: true });
       onToast(res.message, 'error');
@@ -234,7 +261,10 @@ export const RumahwebSyncModal: React.FC<RumahwebSyncModalProps> = ({
     onToast('Kode script api.php berhasil disalin ke papan klip!', 'success');
   };
 
-  const isConnected = config.lastSyncStatus === 'success' && Boolean(config.apiUrl);
+  const isConnected =
+    (config.lastSyncStatus === 'success' || Boolean(config.apiUrl)) &&
+    config.lastSyncStatus !== 'error' &&
+    Boolean(config.apiUrl);
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5">
@@ -425,11 +455,51 @@ export const RumahwebSyncModal: React.FC<RumahwebSyncModalProps> = ({
               )}
 
               {/* Action Buttons */}
-              <div className="space-y-3">
+              <div className="space-y-4">
                 <h4 className="font-extrabold text-sm text-slate-900 flex items-center gap-2">
                   <Layers className="w-4 h-4 text-slate-500" />
                   <span>Aksi Sinkronisasi Antar-PC</span>
                 </h4>
+
+                {/* Two-Way Smart Merge Card */}
+                <div className="p-5 rounded-2xl border-2 border-indigo-500/30 bg-gradient-to-br from-indigo-50/60 via-purple-50/30 to-blue-50/60 space-y-3">
+                  <div className="flex items-start justify-between">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-lg bg-indigo-600 text-white flex items-center justify-center font-bold">
+                          <RefreshCw className={`w-4 h-4 ${isSmartSyncing ? 'animate-spin' : ''}`} />
+                        </div>
+                        <h5 className="font-extrabold text-slate-900 text-sm sm:text-base">
+                          Live Sync Cerdas 2-Arah (Smart Merge)
+                        </h5>
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-indigo-100 text-indigo-700 border border-indigo-200">
+                          Aman &amp; Anti-Hilang
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-600 leading-relaxed">
+                        Menggabungkan data antara Komputer Ini dan Hosting MySQL secara otomatis. Siswa baru yang ditambahkan di Laptop A tidak akan tertindih atau hilang, dan akan langsung tersinkron ke Laptop B.
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={handleSmartSync}
+                    disabled={isSmartSyncing || isPushing || isPulling}
+                    className="w-full inline-flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-xs sm:text-sm font-bold text-white bg-gradient-to-r from-indigo-600 via-indigo-700 to-blue-600 hover:from-indigo-700 hover:to-blue-700 disabled:opacity-50 transition shadow-md cursor-pointer"
+                  >
+                    {isSmartSyncing ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>Sedang Menyelaraskan Data...</span>
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw className="w-4 h-4" />
+                        <span>Jalankan Live Sync (Smart Merge) Sekarang</span>
+                      </>
+                    )}
+                  </button>
+                </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {/* Push Button */}

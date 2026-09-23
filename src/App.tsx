@@ -30,6 +30,9 @@ import {
   getIsSyncInProgress,
   getLastKnownSyncTimestamp,
   saveLastKnownSyncTimestamp,
+  saveStudentToHosting,
+  pushStudentsToHosting,
+  executeTwoWaySync,
 } from './services/mysqlSync';
 import { Student, StudentDocument, User, VerificationStatus, AuditLog } from './types';
 import { Navbar } from './components/Navbar';
@@ -115,34 +118,42 @@ export default function App() {
 
   // Live Auto-Sync Status
   const [isLiveSyncing, setIsLiveSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<'connected' | 'syncing' | 'error' | 'idle'>(() => {
+    const config = getSyncConfig();
+    return config.apiUrl ? 'connected' : 'idle';
+  });
 
-  // Background sync helper
+  // Background sync helper: performs bidirectional smart merge
   const syncToCloudIfEnabled = () => {
     const config = getSyncConfig();
     if (config.apiUrl && config.autoSync) {
-      pushAllDataToHosting({
-        students: getStudents(),
-        documents: getDocuments(),
-        academicYears: getAcademicYears(),
-        logs: getLogs(),
-      }).catch((e) => console.warn('Auto cloud sync failed:', e));
+      executeTwoWaySync()
+        .then((res) => {
+          if (res.success && (res.pushedCount > 0 || res.pulledCount > 0)) {
+            refreshAllData();
+          }
+        })
+        .catch((e) => console.warn('Auto cloud sync failed:', e));
     }
   };
 
-  // Manual Trigger to force pull from cloud anytime
+  // Manual Trigger: performs bidirectional smart merge (never overwrites new local additions!)
   const handleManualSync = async () => {
     if (getIsSyncInProgress() || isLiveSyncing) return;
     setIsLiveSyncing(true);
+    setSyncStatus('syncing');
     try {
-      const res = await pullAllDataFromHosting();
-      if (res.success && res.data) {
-        applyRemoteSyncedData(res.data);
+      const res = await executeTwoWaySync();
+      if (res.success) {
         refreshAllData();
-        showToast(`Berhasil menyelaraskan ${res.data.students.length} siswa dari Cloud MySQL.`, 'success');
+        setSyncStatus('connected');
+        showToast(res.message, 'success');
       } else {
+        setSyncStatus('error');
         showToast(res.message || 'Gagal sinkronisasi data.', 'error');
       }
     } catch (err: any) {
+      setSyncStatus('error');
       showToast(`Gagal sinkronisasi: ${err.message || String(err)}`, 'error');
     } finally {
       setIsLiveSyncing(false);
@@ -168,12 +179,15 @@ export default function App() {
         const check = await checkServerSyncStatus();
         if (isCancelled) return;
 
-        // If check failed or server has no counts, check if we need initial pull
+        if (check.success) {
+          setSyncStatus('connected');
+        }
+
         const currentStudents = getStudents();
         const currentDocs = getDocuments();
         const lastKnownUpdate = getLastKnownSyncTimestamp();
 
-        let shouldPull = false;
+        let shouldSync = false;
 
         if (check.success && check.counts) {
           const countDiffers =
@@ -187,35 +201,34 @@ export default function App() {
           const isFreshLocalSeed =
             currentStudents.length <= 6 && check.counts.students > 6;
 
-          shouldPull = countDiffers || timestampDiffers || isFreshLocalSeed;
+          shouldSync = countDiffers || timestampDiffers || isFreshLocalSeed;
         } else if (!isBackground) {
-          // On explicit startup, if check wasn't supported yet, attempt initial pull
-          shouldPull = true;
+          shouldSync = true;
         }
 
-        if (shouldPull) {
+        if (shouldSync) {
           setIsLiveSyncing(true);
-          const res = await pullAllDataFromHosting();
+          setSyncStatus('syncing');
+          const res = await executeTwoWaySync();
           if (isCancelled) return;
 
-          if (res.success && res.data) {
-            applyRemoteSyncedData(res.data);
-            if (check.lastStudentUpdate) {
-              saveLastKnownSyncTimestamp(check.lastStudentUpdate);
-            }
+          if (res.success) {
             refreshAllData();
+            setSyncStatus('connected');
 
             if (!isBackground) {
               showToast(
-                `Cloud MySQL: Terhubung & otomatis memuat ${res.data.students.length} siswa ke PC ini.`,
+                `Cloud MySQL: Terhubung & menyelaraskan ${res.totalStudents} siswa (${res.pushedCount} dikirim, ${res.pulledCount} ditarik).`,
                 'success'
               );
-            } else {
+            } else if (res.pushedCount > 0 || res.pulledCount > 0) {
               showToast(
-                `Data otomatis tersinkronisasi dari Cloud (${res.data.students.length} siswa).`,
+                `Data otomatis tersinkronisasi: ${res.totalStudents} total siswa (${res.pulledCount} data baru ditarik).`,
                 'success'
               );
             }
+          } else {
+            setSyncStatus(check.success ? 'connected' : 'error');
           }
         }
       } catch (err) {
@@ -295,8 +308,14 @@ export default function App() {
     );
 
     refreshAllData();
-    syncToCloudIfEnabled();
     showToast(isEditing ? 'Data siswa berhasil diperbarui.' : 'Siswa baru berhasil ditambahkan.');
+
+    // Save directly to cloud MySQL (lightweight, near-instant)
+    saveStudentToHosting(saved).then((res) => {
+      if (res.success) {
+        setSyncStatus('connected');
+      }
+    }).catch(() => {});
   };
 
   const handleDeleteStudent = (studentId: string, studentName: string) => {
@@ -485,6 +504,7 @@ export default function App() {
               onOpenRumahwebSync={() => setIsRumahwebSyncOpen(true)}
               onForceSync={handleManualSync}
               isSyncing={isLiveSyncing}
+              syncStatus={syncStatus}
               onToggleSidebar={() => setIsMobileSidebarOpen((prev) => !prev)}
               currentView={currentView}
               students={students}

@@ -28,6 +28,7 @@ interface NavbarProps {
   onOpenRumahwebSync?: () => void;
   onForceSync?: () => void;
   isSyncing?: boolean;
+  syncStatus?: 'connected' | 'syncing' | 'error' | 'idle';
   onToggleSidebar: () => void;
   currentView: string;
   students: Student[];
@@ -43,6 +44,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenRumahwebSync,
   onForceSync,
   isSyncing = false,
+  syncStatus = 'connected',
   onToggleSidebar,
   currentView,
   students,
@@ -50,7 +52,9 @@ export const Navbar: React.FC<NavbarProps> = ({
 }) => {
   const isAdmin = currentUser.role === 'admin';
   const syncConfig = getSyncConfig();
-  const isCloudConnected = syncConfig.lastSyncStatus === 'success' && Boolean(syncConfig.apiUrl);
+  const isCloudConnected =
+    syncStatus === 'connected' ||
+    (Boolean(syncConfig.apiUrl) && syncConfig.lastSyncStatus !== 'error');
 
   const viewTitles: Record<string, { title: string; subtitle: string; icon: React.ComponentType<{ className?: string }> }> = {
     dashboard: {
@@ -146,26 +150,34 @@ export const Navbar: React.FC<NavbarProps> = ({
                   type="button"
                   onClick={onOpenRumahwebSync}
                   title={
-                    isCloudConnected
-                      ? 'Sinkronisasi Otomatis Antar-Laptop Aktif - Klik untuk buka pengaturan'
+                    isSyncing
+                      ? 'Sedang menyelaraskan data dengan database MySQL Rumahweb...'
+                      : isCloudConnected
+                      ? 'Live Sync Aktif: Data otomatis tersambung antar-laptop'
                       : 'Sambungkan ke Database MySQL Hosting Rumahweb'
                   }
                   className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-bold rounded-lg transition cursor-pointer ${
-                    isCloudConnected
+                    isSyncing
+                      ? 'text-blue-800 bg-blue-50'
+                      : isCloudConnected
                       ? 'text-emerald-800 hover:bg-emerald-50'
                       : 'text-indigo-800 hover:bg-indigo-50'
                   }`}
                 >
                   <div className="relative">
-                    <Cloud className={`w-3.5 h-3.5 ${isCloudConnected ? 'text-emerald-600' : 'text-slate-500'}`} />
+                    <Cloud className={`w-3.5 h-3.5 ${isSyncing ? 'text-blue-600 animate-bounce' : isCloudConnected ? 'text-emerald-600' : 'text-slate-500'}`} />
                     <span
                       className={`absolute -top-1 -right-1 w-2 h-2 rounded-full ${
-                        isCloudConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-400'
+                        isSyncing
+                          ? 'bg-blue-500 animate-ping'
+                          : isCloudConnected
+                          ? 'bg-emerald-500 animate-pulse'
+                          : 'bg-amber-400'
                       }`}
                     />
                   </div>
-                  <span className="hidden sm:inline">
-                    {isCloudConnected ? 'Live Sync' : 'Sinkron Cloud'}
+                  <span className="inline-block whitespace-nowrap">
+                    {isSyncing ? 'Sinkronisasi...' : isCloudConnected ? 'Live Sync' : 'Sinkron Cloud'}
                   </span>
                 </button>
 

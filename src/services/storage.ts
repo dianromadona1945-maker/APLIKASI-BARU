@@ -11,7 +11,56 @@ const STORAGE_KEYS = {
   INITIALIZED: 'arsip_initialized_v3',
   IS_AUTHENTICATED: 'arsip_auth_state_v1',
   ACADEMIC_YEARS: 'arsip_academic_years_v3',
+  DELETED_STUDENT_IDS: 'arsip_deleted_student_ids_v1',
 };
+
+// Tombstone tracking for deleted students across devices
+export function getDeletedStudentIds(): string[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.DELETED_STUDENT_IDS);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function recordDeletedStudentId(studentId: string): void {
+  try {
+    const list = getDeletedStudentIds();
+    if (!list.includes(studentId)) {
+      list.push(studentId);
+      // Keep up to 1000 IDs
+      localStorage.setItem(STORAGE_KEYS.DELETED_STUDENT_IDS, JSON.stringify(list.slice(-1000)));
+    }
+  } catch {}
+}
+
+export function removeDeletedStudentId(studentId: string): void {
+  try {
+    const list = getDeletedStudentIds().filter((id) => id !== studentId);
+    localStorage.setItem(STORAGE_KEYS.DELETED_STUDENT_IDS, JSON.stringify(list));
+  } catch {}
+}
+
+export function markStudentsAsSynced(studentIds: string[]): void {
+  try {
+    const idSet = new Set(studentIds);
+    const students = getStudents();
+    let changed = false;
+    const updated = students.map((s) => {
+      if (idSet.has(s.id) && !s.syncedWithCloud) {
+        changed = true;
+        return { ...s, syncedWithCloud: true };
+      }
+      return s;
+    });
+    if (changed) {
+      localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(updated));
+    }
+  } catch {}
+}
 
 // Helper: parse institution from string (SD, SMP, or SMK)
 export function parseInstitution(str?: string, defaultInst: InstitutionLevel = 'SMP'): InstitutionLevel {
@@ -449,6 +498,7 @@ export function saveStudent(studentData: Omit<Student, 'id' | 'createdAt' | 'upd
 
   if (studentData.id) {
     // Update
+    removeDeletedStudentId(studentData.id);
     const idx = students.findIndex((s) => s.id === studentData.id);
     if (idx !== -1) {
       savedStudent = {
@@ -456,6 +506,7 @@ export function saveStudent(studentData: Omit<Student, 'id' | 'createdAt' | 'upd
         ...cleanData,
         id: studentData.id,
         updatedAt: now,
+        syncedWithCloud: false,
       };
       students[idx] = savedStudent;
     } else {
@@ -464,17 +515,20 @@ export function saveStudent(studentData: Omit<Student, 'id' | 'createdAt' | 'upd
         id: studentData.id,
         createdAt: now,
         updatedAt: now,
+        syncedWithCloud: false,
       };
       students.unshift(savedStudent);
     }
   } else {
     // Create with guaranteed unique ID
     const newId = `std-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    removeDeletedStudentId(newId);
     savedStudent = {
       ...cleanData,
       id: newId,
       createdAt: now,
       updatedAt: now,
+      syncedWithCloud: false,
     };
     students.unshift(savedStudent);
   }
@@ -528,21 +582,26 @@ export function saveStudentsBatch(
 
     if (existingIndex !== -1) {
       if (mode === 'update_existing') {
+        const existingId = students[existingIndex].id;
+        removeDeletedStudentId(existingId);
         students[existingIndex] = {
           ...students[existingIndex],
           ...cleanData,
           updatedAt: now,
+          syncedWithCloud: false,
         };
         updatedCount++;
       }
       // If skip_existing, simply do not add duplicate
     } else {
       const newId = `std-${Date.now()}-${Math.random().toString(36).slice(2, 9)}-${idx}`;
+      removeDeletedStudentId(newId);
       students.unshift({
         ...cleanData,
         id: newId,
         createdAt: now,
         updatedAt: now,
+        syncedWithCloud: false,
       });
       addedCount++;
     }
@@ -553,6 +612,7 @@ export function saveStudentsBatch(
 }
 
 export function deleteStudent(studentId: string): void {
+  recordDeletedStudentId(studentId);
   const students = getStudents();
   const updated = students.filter((s) => s.id !== studentId);
   localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(updated));
@@ -885,24 +945,190 @@ export function restoreDatabaseBackup(jsonString: string): { success: boolean; m
   }
 }
 
+export interface SmartMergeResult {
+  mergedStudents: Student[];
+  studentsToPush: Student[];
+  deletedToSync: string[];
+  localStudentsAddedOrUpdated: number;
+  remoteStudentsAddedOrUpdated: number;
+}
+
+export function smartMergeRemoteData(data: {
+  students: Student[];
+  documents?: StudentDocument[];
+  academicYears?: string[];
+  logs?: AuditLog[];
+}): SmartMergeResult {
+  const localStudents = getStudents();
+  const deletedIds = new Set(getDeletedStudentIds());
+
+  const localMap = new Map<string, Student>();
+  localStudents.forEach((s) => localMap.set(s.id, s));
+
+  // Build secondary indexes by NISN and NIS to match records even if ID differed
+  const localByNisn = new Map<string, Student>();
+  const localByNis = new Map<string, Student>();
+  localStudents.forEach((s) => {
+    if (s.nisn && s.nisn.trim() && s.nisn !== '-' && s.nisn !== '0') {
+      localByNisn.set(s.nisn.trim(), s);
+    }
+    if (s.nis && s.nis.trim() && s.nis !== '-' && s.nis !== '0') {
+      localByNis.set(s.nis.trim(), s);
+    }
+  });
+
+  const mergedMap = new Map<string, Student>();
+  const studentsToPush: Student[] = [];
+  const deletedToSync: string[] = [];
+
+  let localStudentsAddedOrUpdated = 0;
+  let remoteStudentsAddedOrUpdated = 0;
+
+  const remoteList = Array.isArray(data.students) ? data.students : [];
+
+  // 1. Process Remote Students
+  for (const remote of remoteList) {
+    if (!remote || !remote.id) continue;
+
+    // If locally deleted on this laptop, do NOT resurrect it! Mark to delete on server
+    if (deletedIds.has(remote.id)) {
+      deletedToSync.push(remote.id);
+      continue;
+    }
+
+    // Match with local student
+    let local = localMap.get(remote.id);
+    if (!local && remote.nisn && remote.nisn.trim() && remote.nisn !== '-') {
+      local = localByNisn.get(remote.nisn.trim());
+    }
+    if (!local && remote.nis && remote.nis.trim() && remote.nis !== '-') {
+      local = localByNis.get(remote.nis.trim());
+    }
+
+    if (local) {
+      const lTime = new Date(local.updatedAt || local.createdAt || 0).getTime();
+      const rTime = new Date(remote.updatedAt || remote.createdAt || 0).getTime();
+
+      if (local.syncedWithCloud === false && lTime > rTime) {
+        // Local has unsynced newer changes: keep local and mark to push
+        mergedMap.set(local.id, local);
+        studentsToPush.push(local);
+        localStudentsAddedOrUpdated++;
+      } else {
+        // Remote is newer or equal: use remote and mark as synced
+        mergedMap.set(local.id, {
+          ...local,
+          ...remote,
+          id: local.id,
+          syncedWithCloud: true,
+        });
+        if (rTime > lTime) {
+          remoteStudentsAddedOrUpdated++;
+        }
+      }
+      localMap.delete(local.id);
+    } else {
+      // Remote student does not exist locally -> add to local student list!
+      mergedMap.set(remote.id, {
+        ...remote,
+        syncedWithCloud: true,
+      });
+      remoteStudentsAddedOrUpdated++;
+    }
+  }
+
+  // 2. Process remaining Local Students that remote does NOT have
+  for (const [id, local] of localMap.entries()) {
+    if (deletedIds.has(id)) {
+      deletedToSync.push(id);
+      continue;
+    }
+
+    // If student was already confirmed synced with cloud in the past (syncedWithCloud === true)
+    // but remoteList has students and is now missing this student, it was deleted on cloud by another device!
+    if (local.syncedWithCloud === true && remoteList.length > 0) {
+      recordDeletedStudentId(id);
+      continue;
+    }
+
+    // Otherwise, this student was newly created or updated locally and NOT yet synced!
+    // NEVER overwrite or delete it: keep it in merged and push to cloud!
+    mergedMap.set(id, local);
+    studentsToPush.push(local);
+    localStudentsAddedOrUpdated++;
+  }
+
+  const finalStudents = Array.from(mergedMap.values());
+  localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(finalStudents));
+
+  // 3. Merge Documents (preserving base64 dataUrl if local already has it)
+  if (data.documents && Array.isArray(data.documents)) {
+    const localDocs = getDocuments();
+    const docMap = new Map<string, StudentDocument>();
+    localDocs.forEach((d) => docMap.set(d.id, d));
+
+    for (const rDoc of data.documents) {
+      if (!rDoc || !rDoc.id) continue;
+      if (deletedIds.has(rDoc.studentId) || !mergedMap.has(rDoc.studentId)) continue;
+
+      const lDoc = docMap.get(rDoc.id);
+      if (lDoc) {
+        docMap.set(rDoc.id, {
+          ...lDoc,
+          ...rDoc,
+          fileDataUrl: rDoc.fileDataUrl || lDoc.fileDataUrl,
+        });
+      } else {
+        docMap.set(rDoc.id, rDoc);
+      }
+    }
+
+    const finalDocs = Array.from(docMap.values()).filter(
+      (d) => !deletedIds.has(d.studentId) && mergedMap.has(d.studentId)
+    );
+    localStorage.setItem(STORAGE_KEYS.DOCUMENTS, JSON.stringify(finalDocs));
+  }
+
+  // 4. Merge Academic Years
+  if (data.academicYears && Array.isArray(data.academicYears) && data.academicYears.length > 0) {
+    const currentYears = getAcademicYears();
+    const combined = Array.from(new Set([...currentYears, ...data.academicYears]));
+    saveAcademicYears(sortAcademicYears(combined));
+  }
+
+  // 5. Merge Logs
+  if (data.logs && Array.isArray(data.logs) && data.logs.length > 0) {
+    const currentLogs = getLogs();
+    const logMap = new Map<string, AuditLog>();
+    currentLogs.forEach((l) => logMap.set(l.id, l));
+    data.logs.forEach((l) => {
+      if (l && l.id && !logMap.has(l.id)) {
+        logMap.set(l.id, l);
+      }
+    });
+    const finalLogs = Array.from(logMap.values())
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+      .slice(0, 300);
+    localStorage.setItem(STORAGE_KEYS.LOGS, JSON.stringify(finalLogs));
+  }
+
+  return {
+    mergedStudents: finalStudents,
+    studentsToPush,
+    deletedToSync,
+    localStudentsAddedOrUpdated,
+    remoteStudentsAddedOrUpdated,
+  };
+}
+
 export function applyRemoteSyncedData(data: {
   students: Student[];
   documents?: StudentDocument[];
   academicYears?: string[];
   logs?: AuditLog[];
 }): void {
-  if (data.students && Array.isArray(data.students)) {
-    localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(data.students));
-  }
-  if (data.documents && Array.isArray(data.documents)) {
-    localStorage.setItem(STORAGE_KEYS.DOCUMENTS, JSON.stringify(data.documents));
-  }
-  if (data.academicYears && Array.isArray(data.academicYears)) {
-    localStorage.setItem(STORAGE_KEYS.ACADEMIC_YEARS, JSON.stringify(data.academicYears));
-  }
-  if (data.logs && Array.isArray(data.logs)) {
-    localStorage.setItem(STORAGE_KEYS.LOGS, JSON.stringify(data.logs));
-  }
+  // Use smartMergeRemoteData to guarantee zero data loss!
+  smartMergeRemoteData(data);
 }
 
 export function resetToFactoryDefault(): void {

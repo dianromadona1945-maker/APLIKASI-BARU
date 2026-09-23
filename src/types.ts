@@ -64,6 +64,7 @@ export interface Student {
   academicYear: string;
   createdAt: string;
   updatedAt: string;
+  syncedWithCloud?: boolean;
 }
 
 export interface AuditLog {
