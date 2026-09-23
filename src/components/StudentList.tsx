@@ -605,7 +605,7 @@ export const StudentList: React.FC<StudentListProps> = ({
                             </button>
                           )}
 
-                          {currentUserRole === 'admin' && (
+                          {(currentUserRole === 'admin' || currentUserRole === 'petugas_tu') && (
                             <button
                               onClick={() => onDeleteStudent(student.id, student.name)}
                               title="Hapus Siswa & Seluruh Dokumen"

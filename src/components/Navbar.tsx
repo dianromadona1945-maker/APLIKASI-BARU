@@ -4,7 +4,6 @@ import {
   ShieldCheck,
   UserCheck,
   LogOut,
-  ArrowRightLeft,
   School,
   FileText,
   Users,
@@ -21,10 +20,8 @@ import { getSyncConfig } from '../services/mysqlSync';
 
 interface NavbarProps {
   currentUser: User;
-  onSwitchUserClick: () => void;
   onLogoutClick: () => void;
   onEditProfileClick?: () => void;
-  onLoginAsAdminClick?: () => void;
   onOpenRumahwebSync?: () => void;
   onForceSync?: () => void;
   isSyncing?: boolean;
@@ -37,10 +34,8 @@ interface NavbarProps {
 
 export const Navbar: React.FC<NavbarProps> = ({
   currentUser,
-  onSwitchUserClick,
   onLogoutClick,
   onEditProfileClick,
-  onLoginAsAdminClick,
   onOpenRumahwebSync,
   onForceSync,
   isSyncing = false,
@@ -236,29 +231,6 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <span className="hidden xl:inline">Ubah Profil &amp; Sandi</span>
               </button>
             )}
-
-            {/* Quick Login Admin button if user is not admin */}
-            {!isAdmin && onLoginAsAdminClick && (
-              <button
-                type="button"
-                onClick={onLoginAsAdminClick}
-                title="Masuk sebagai Administrator"
-                className="hidden xl:inline-flex items-center gap-1.5 px-2.5 py-2 text-xs font-bold text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg shadow-2xs transition"
-              >
-                <ShieldCheck className="w-3.5 h-3.5 text-red-600" />
-                <span>Login Admin</span>
-              </button>
-            )}
-
-            <button
-              type="button"
-              onClick={onSwitchUserClick}
-              title="Ganti Akun / Peran Petugas"
-              className="inline-flex items-center gap-1.5 px-2.5 py-2 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg shadow-2xs hover:border-slate-300 transition cursor-pointer"
-            >
-              <ArrowRightLeft className="w-3.5 h-3.5 text-slate-500" />
-              <span className="hidden lg:inline">Ganti Akun</span>
-            </button>
 
             <button
               type="button"

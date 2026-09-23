@@ -384,7 +384,7 @@ export const StudentDossierModal: React.FC<StudentDossierModalProps> = ({
                           <RefreshCw className="w-3.5 h-3.5" />
                         </button>
 
-                        {currentUser.role === 'admin' && (
+                        {(currentUser.role === 'admin' || currentUser.role === 'petugas_tu') && (
                           <button
                             onClick={() => onDeleteDocument(doc.id, doc.title, doc.studentId, doc.docType)}
                             className="p-1.5 rounded-lg text-rose-600 hover:bg-rose-50 border border-rose-200 transition"

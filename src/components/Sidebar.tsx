@@ -7,11 +7,9 @@ import {
   Database,
   School,
   LogOut,
-  UserCheck,
   X,
   Sparkles,
   ChevronRight,
-  Shield,
   FileText,
   Calendar,
   Cloud,
@@ -24,10 +22,8 @@ interface SidebarProps {
   currentView: string;
   onSelectView: (view: string) => void;
   currentUser: User;
-  onSwitchUserClick: () => void;
   onLogoutClick: () => void;
   onEditProfileClick?: () => void;
-  onLoginAsAdminClick?: () => void;
   onManageAcademicYears?: () => void;
   onOpenRumahwebSync?: () => void;
   isOpen: boolean;
@@ -40,10 +36,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   currentView,
   onSelectView,
   currentUser,
-  onSwitchUserClick,
   onLogoutClick,
   onEditProfileClick,
-  onLoginAsAdminClick,
   onManageAcademicYears,
   onOpenRumahwebSync,
   isOpen,
@@ -334,41 +328,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
           </div>
 
-          {/* Quick Action Buttons */}
-          <div className="grid grid-cols-2 gap-2 pt-1">
-            <button
-              type="button"
-              id="sidebar-btn-switch-user"
-              onClick={onSwitchUserClick}
-              className="py-1.5 px-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-[11px] font-bold transition flex items-center justify-center gap-1.5 border border-slate-700"
-              title="Ganti akun petugas demo"
-            >
-              <UserCheck className="w-3.5 h-3.5 text-blue-400" />
-              <span>Ganti Akun</span>
-            </button>
-
+          {/* Logout Action Button */}
+          <div className="pt-1">
             <button
               type="button"
               id="sidebar-btn-logout"
               onClick={onLogoutClick}
-              className="py-1.5 px-2 bg-rose-950/50 hover:bg-rose-900/60 text-rose-300 rounded-lg text-[11px] font-bold transition flex items-center justify-center gap-1.5 border border-rose-800/40"
+              className="w-full py-2 px-3 bg-rose-950/50 hover:bg-rose-900/60 text-rose-300 hover:text-rose-200 rounded-lg text-xs font-bold transition flex items-center justify-center gap-2 border border-rose-800/40 cursor-pointer"
               title="Keluar dari sesi aplikasi"
             >
               <LogOut className="w-3.5 h-3.5" />
-              <span>Keluar</span>
+              <span>Keluar dari Aplikasi</span>
             </button>
           </div>
-
-          {!isAdmin && onLoginAsAdminClick && (
-            <button
-              type="button"
-              onClick={onLoginAsAdminClick}
-              className="w-full py-1.5 px-2 bg-red-950/40 hover:bg-red-900/50 text-red-300 rounded-lg text-[11px] font-bold transition flex items-center justify-center gap-1.5 border border-red-800/40"
-            >
-              <Shield className="w-3 h-3 text-red-400" />
-              <span>Masuk sebagai Admin</span>
-            </button>
-          )}
         </div>
       </aside>
     </>

@@ -73,7 +73,7 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({
     petugas_tu: {
       label: 'Petugas Tata Usaha (TU)',
       color: 'bg-blue-50 text-blue-700 border-blue-200',
-      desc: 'Input dan edit biodata siswa, unggah berkas arsip, unduh berkas digital, dan cetak laporan.',
+      desc: 'Kelola biodata siswa (tambah, edit, hapus), unggah & hapus berkas dokumen, unduh arsip, dan cetak laporan.',
     },
   };
 
@@ -227,6 +227,10 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({
                     <span>Unduh Arsip &amp; Ekspor Dokumen ZIP/Excel</span>
                   </div>
                   <div className="flex items-center gap-1.5">
+                    <Check className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Hapus Data Siswa &amp; Berkas Dokumen</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
                     {r === 'admin' ? (
                       <Check className="w-3.5 h-3.5 text-emerald-600" />
                     ) : (
@@ -240,7 +244,7 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({
                     ) : (
                       <span className="text-slate-300 font-bold">✕</span>
                     )}
-                    <span>Hapus Data Permanen &amp; Cadangan Sistem (Backup)</span>
+                    <span>Cadangan Sistem (Backup) &amp; Pengaturan Cloud</span>
                   </div>
                 </div>
               </div>

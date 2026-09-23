@@ -51,7 +51,6 @@ import { ManageAcademicYearsModal } from './components/ManageAcademicYearsModal'
 import { AuditLogsView } from './components/AuditLogsView';
 import { UserManagementView } from './components/UserManagementView';
 import { BackupSecurityView } from './components/BackupSecurityView';
-import { UserSwitcherModal } from './components/UserSwitcherModal';
 import { EditUserModal } from './components/EditUserModal';
 import { ImportExcelModal } from './components/ImportExcelModal';
 import { RumahwebSyncModal } from './components/RumahwebSyncModal';
@@ -96,8 +95,7 @@ export default function App() {
     student: null,
   });
 
-  // User Switcher & Edit Profile Modals
-  const [isUserSwitcherOpen, setIsUserSwitcherOpen] = useState(false);
+  // Edit Profile Modal
   const [isEditProfileOpen, setIsEditProfileOpen] = useState(false);
 
   // Manage Academic Years Modal
@@ -375,14 +373,6 @@ export default function App() {
     showToast('Anda telah berhasil keluar dari sistem.', 'success');
   };
 
-  const handleLoginAsAdminDirectly = () => {
-    const admin = loginAsRole('admin');
-    setCurrentUserState(admin);
-    setIsAuthenticated(true);
-    refreshAllData();
-    showToast(`Akses aktif: Anda sekarang masuk sebagai Administrator (${admin.name}).`, 'success');
-  };
-
   // Student Actions
   const handleSaveStudent = (studentData: Omit<Student, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }) => {
     const isEditing = !!studentData.id;
@@ -553,15 +543,6 @@ export default function App() {
     }
   };
 
-  // User & Role Switching
-  const handleSwitchUser = (newUser: User) => {
-    setCurrentUser(newUser);
-    setCurrentUserState(newUser);
-    addAuditLog('LOGIN', `Petugas beralih akun ke: ${newUser.name} (${newUser.role})`);
-    refreshAllData();
-    showToast(`Beralih akun: ${newUser.name} (${newUser.role})`);
-  };
-
   const handleSaveUser = (user: User) => {
     const isExisting = users.some((u) => u.id === user.id);
     saveUser(user);
@@ -619,10 +600,8 @@ export default function App() {
             currentView={currentView}
             onSelectView={(view) => setCurrentView(view)}
             currentUser={currentUser}
-            onSwitchUserClick={() => setIsUserSwitcherOpen(true)}
             onLogoutClick={handleLogout}
             onEditProfileClick={() => setIsEditProfileOpen(true)}
-            onLoginAsAdminClick={currentUser.role !== 'admin' ? handleLoginAsAdminDirectly : undefined}
             onManageAcademicYears={() => setIsManageYearsOpen(true)}
             onOpenRumahwebSync={() => setIsRumahwebSyncOpen(true)}
             isOpen={isMobileSidebarOpen}
@@ -636,10 +615,8 @@ export default function App() {
             {/* Top Navbar */}
             <Navbar
               currentUser={currentUser}
-              onSwitchUserClick={() => setIsUserSwitcherOpen(true)}
               onLogoutClick={handleLogout}
               onEditProfileClick={() => setIsEditProfileOpen(true)}
-              onLoginAsAdminClick={currentUser.role !== 'admin' ? handleLoginAsAdminDirectly : undefined}
               onOpenRumahwebSync={() => setIsRumahwebSyncOpen(true)}
               onForceSync={handleManualSync}
               isSyncing={isLiveSyncing}
@@ -762,16 +739,6 @@ export default function App() {
             onClose={() => setIsImportExcelOpen(false)}
             onImportSuccess={handleBatchImportStudents}
             existingStudents={students}
-          />
-
-          {/* User Switcher Modal */}
-          <UserSwitcherModal
-            isOpen={isUserSwitcherOpen}
-            onClose={() => setIsUserSwitcherOpen(false)}
-            users={users}
-            currentUser={currentUser}
-            onSelectUser={handleSwitchUser}
-            onLogout={handleLogout}
           />
 
           {/* Manage Academic Years Modal */}
