@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { X, ShieldCheck, KeyRound, Eye, EyeOff, Save, CheckCircle2, AlertCircle } from 'lucide-react';
 import { User, UserRole } from '../types';
-import { getUsers } from '../services/storage';
 
 interface EditUserModalProps {
   isOpen: boolean;
   onClose: () => void;
   user: User | null;
   onSave: (updatedUser: User) => void;
+  users?: User[];
 }
 
 export const EditUserModal: React.FC<EditUserModalProps> = ({
@@ -15,6 +15,7 @@ export const EditUserModal: React.FC<EditUserModalProps> = ({
   onClose,
   user,
   onSave,
+  users = [],
 }) => {
   if (!isOpen || !user) return null;
 
@@ -57,7 +58,7 @@ export const EditUserModal: React.FC<EditUserModalProps> = ({
     }
 
     // Check duplicate username against other users
-    const allUsers = getUsers();
+    const allUsers = users;
     const isTaken = allUsers.some(
       (u) => u.id !== user.id && u.username.toLowerCase() === cleanUsername
     );

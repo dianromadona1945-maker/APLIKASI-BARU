@@ -16,6 +16,8 @@ import {
   EyeOff,
   X,
   AlertTriangle,
+  RefreshCw,
+  Database,
 } from 'lucide-react';
 import { User, UserRole } from '../types';
 import { EditUserModal } from './EditUserModal';
@@ -25,6 +27,8 @@ interface UserManagementViewProps {
   onSaveUser: (user: User) => void;
   onDeleteUser: (userId: string) => void;
   currentUser: User;
+  onRefreshUsers?: () => void;
+  isRefreshing?: boolean;
 }
 
 export const UserManagementView: React.FC<UserManagementViewProps> = ({
@@ -32,6 +36,8 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({
   onSaveUser,
   onDeleteUser,
   currentUser,
+  onRefreshUsers,
+  isRefreshing = false,
 }) => {
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
@@ -151,16 +157,48 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({
           </p>
         </div>
 
-        <button
-          onClick={() => {
-            setFormError(null);
-            setShowAddModal(true);
-          }}
-          className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 active:scale-[0.99] text-white rounded-xl text-xs font-bold shadow-2xs transition self-start sm:self-auto cursor-pointer"
-        >
-          <UserPlus className="w-4 h-4" />
-          <span>Tambah Petugas Baru</span>
-        </button>
+        <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
+          {onRefreshUsers && (
+            <button
+              onClick={onRefreshUsers}
+              disabled={isRefreshing}
+              className="inline-flex items-center gap-1.5 px-3 py-2 bg-white hover:bg-slate-100 active:scale-[0.99] text-slate-700 border border-slate-200 rounded-xl text-xs font-bold shadow-2xs transition disabled:opacity-50 cursor-pointer"
+              title="Ambil data akun terbaru langsung dari database server MySQL"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 text-blue-600 ${isRefreshing ? 'animate-spin' : ''}`} />
+              <span>{isRefreshing ? 'Menyinkronkan...' : 'Segarkan dari Server'}</span>
+            </button>
+          )}
+
+          <button
+            onClick={() => {
+              setFormError(null);
+              setShowAddModal(true);
+            }}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 active:scale-[0.99] text-white rounded-xl text-xs font-bold shadow-2xs transition cursor-pointer"
+          >
+            <UserPlus className="w-4 h-4" />
+            <span>Tambah Petugas Baru</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Database Single Source of Truth Banner */}
+      <div className="bg-blue-50/70 border border-blue-200/80 rounded-2xl p-3 sm:p-4 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-lg bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+            <Database className="w-4 h-4" />
+          </div>
+          <div>
+            <div className="text-xs font-bold text-blue-950 flex items-center gap-1.5">
+              <span>Database Server MySQL sebagai Satu-satunya Sumber Data Utama</span>
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            </div>
+            <p className="text-[11px] text-blue-800">
+              Penambahan, perubahan, dan penghapusan akun langsung diproses di server pusat dan otomatis tersinkron ke semua komputer &amp; browser admin.
+            </p>
+          </div>
+        </div>
       </div>
 
       {/* Security Banner: UU Perlindungan Data Pribadi */}
@@ -529,6 +567,7 @@ export const UserManagementView: React.FC<UserManagementViewProps> = ({
       <EditUserModal
         isOpen={!!editingUser}
         user={editingUser}
+        users={users}
         onClose={() => setEditingUser(null)}
         onSave={(updated) => {
           onSaveUser(updated);

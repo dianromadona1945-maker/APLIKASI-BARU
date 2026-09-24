@@ -22,6 +22,7 @@ import {
   getAcademicYears,
   saveStudentsBatch,
   applyRemoteSyncedData,
+  setServerUsers,
 } from './services/storage';
 import {
   getSyncConfig,
@@ -38,6 +39,9 @@ import {
   saveLastKnownSyncTimestamp,
   getLastKnownDocSyncTimestamp,
   saveLastKnownDocSyncTimestamp,
+  getLastKnownUserSyncTimestamp,
+  saveLastKnownUserSyncTimestamp,
+  pullUsersFromHosting,
   saveStudentToHosting,
   pushStudentsToHosting,
   executeTwoWaySync,
@@ -69,6 +73,15 @@ export default function App() {
     const config = getSyncConfig();
     if (config.apiUrl) {
       purgeDemoDataFromHosting().catch(() => {});
+      // Fetch authoritative user list from MySQL database immediately on start
+      pullUsersFromHosting()
+        .then((serverUsers) => {
+          if (serverUsers && Array.isArray(serverUsers) && serverUsers.length > 0) {
+            setUsers(serverUsers);
+            setServerUsers(serverUsers);
+          }
+        })
+        .catch(() => {});
     }
   }, []);
 
@@ -78,8 +91,37 @@ export default function App() {
   const [logs, setLogs] = useState<AuditLog[]>(() => getLogs());
   const [users, setUsers] = useState<User[]>(() => getUsers());
   const [currentUser, setCurrentUserState] = useState<User>(() => getCurrentUser());
+  const [isRefreshingUsers, setIsRefreshingUsers] = useState<boolean>(false);
+
+  const fetchUsersFromServer = async (silent = false) => {
+    const config = getSyncConfig();
+    if (!config.apiUrl) return;
+    if (!silent) setIsRefreshingUsers(true);
+    try {
+      const serverUsers = await pullUsersFromHosting();
+      if (serverUsers && Array.isArray(serverUsers) && serverUsers.length > 0) {
+        setUsers(serverUsers);
+        setServerUsers(serverUsers);
+        if (!silent) {
+          showToast(`Berhasil menyinkronkan ${serverUsers.length} akun petugas langsung dari database server.`, 'success');
+        }
+      }
+    } catch (err: any) {
+      if (!silent) {
+        showToast('Gagal menyinkronkan akun dari database server.', 'error');
+      }
+    } finally {
+      if (!silent) setIsRefreshingUsers(false);
+    }
+  };
 
   const [currentView, setCurrentView] = useState<string>('dashboard');
+
+  useEffect(() => {
+    if (currentView === 'users') {
+      fetchUsersFromServer(true);
+    }
+  }, [currentView]);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState<boolean>(false);
   const [selectedStudentForDossier, setSelectedStudentForDossier] = useState<Student | null>(null);
 
@@ -349,6 +391,22 @@ export default function App() {
         const currentDocs = getDocuments();
         const lastKnownUpdate = getLastKnownSyncTimestamp();
         const lastKnownDocUpdate = getLastKnownDocSyncTimestamp();
+        const lastKnownUserUpdate = getLastKnownUserSyncTimestamp();
+
+        // 1. Check if user accounts differ on database server (Single Source of Truth)
+        if (check.success && check.counts && check.counts.users !== undefined) {
+          const userCountDiffers = check.counts.users !== users.length;
+          const userTimestampDiffers = Boolean(check.lastUserUpdate) && check.lastUserUpdate !== lastKnownUserUpdate;
+          if (userCountDiffers || userTimestampDiffers) {
+            pullUsersFromHosting().then((freshUsers) => {
+              if (freshUsers && Array.isArray(freshUsers) && freshUsers.length > 0) {
+                setUsers(freshUsers);
+                setServerUsers(freshUsers);
+                if (check.lastUserUpdate) saveLastKnownUserSyncTimestamp(check.lastUserUpdate);
+              }
+            }).catch(() => {});
+          }
+        }
 
         let shouldSync = false;
 
@@ -656,13 +714,44 @@ export default function App() {
 
   const handleSaveUser = async (user: User) => {
     const isExisting = users.some((u) => u.id === user.id);
-    saveUser(user, true);
+    const config = getSyncConfig();
+
+    if (config.apiUrl) {
+      try {
+        const res = await saveUserToHosting(user);
+        if (res.success) {
+          // DATABASE SERVER IS SINGLE SOURCE OF TRUTH: Refetch users from server immediately
+          const serverUsers = await pullUsersFromHosting();
+          if (serverUsers && Array.isArray(serverUsers) && serverUsers.length > 0) {
+            setUsers(serverUsers);
+            setServerUsers(serverUsers);
+          } else {
+            saveUser(user, true);
+            setUsers(getUsers());
+          }
+        } else {
+          saveUser(user, true);
+          setUsers(getUsers());
+          if (res.message?.includes('Aksi tidak dikenal')) {
+            showToast('Catatan: File api.php di cPanel belum diperbarui untuk multi-petugas. Silakan unduh api.php terbaru di menu Sinkronisasi Cloud.', 'error');
+          }
+        }
+      } catch {
+        saveUser(user, true);
+        setUsers(getUsers());
+      }
+    } else {
+      saveUser(user, true);
+      setUsers(getUsers());
+    }
+
     if (currentUser.id === user.id) {
       setCurrentUser(user);
       setCurrentUserState(user);
     }
+
     addAuditLog(
-      'UPDATE_USER',
+      isExisting ? 'UPDATE_USER' : 'CREATE_USER',
       isExisting
         ? `Memperbarui akun petugas / kata sandi: ${user.name} (${user.role})`
         : `Menambahkan akun petugas baru: ${user.name} (${user.role})`
@@ -672,31 +761,44 @@ export default function App() {
 
     showToast(
       isExisting
-        ? `Profil & kata sandi ${user.name} berhasil diperbarui.`
-        : `Petugas baru "${user.name}" (@${user.username}) berhasil didaftarkan.`,
+        ? `Profil & kata sandi ${user.name} berhasil diperbarui di database server.`
+        : `Petugas baru "${user.name}" (@${user.username}) berhasil disimpan di database server.`,
       'success'
     );
-
-    // Kirim akun petugas ke database MySQL cloud hosting
-    try {
-      const res = await saveUserToHosting(user);
-      if (!res.success && res.message?.includes('Aksi tidak dikenal')) {
-        showToast('Catatan: File api.php di cPanel belum diperbarui untuk multi-petugas. Silakan unduh api.php terbaru di menu Sinkronisasi Cloud.', 'error');
-      }
-    } catch {}
-
-    syncToCloudIfEnabled();
   };
 
-  const handleDeleteUser = (userId: string) => {
+  const handleDeleteUser = async (userId: string) => {
     const target = users.find((u) => u.id === userId);
     if (!target) return;
-    deleteUser(userId);
+    const config = getSyncConfig();
+
+    if (config.apiUrl) {
+      try {
+        const res = await deleteUserFromHosting(userId, target.username);
+        // Record deleted user locally as well
+        deleteUser(userId);
+
+        // Immediately fetch fresh users from server to ensure database state is reflected accurately
+        const serverUsers = await pullUsersFromHosting();
+        if (serverUsers && Array.isArray(serverUsers) && serverUsers.length > 0) {
+          setUsers(serverUsers);
+          setServerUsers(serverUsers);
+        } else {
+          setUsers(getUsers());
+        }
+      } catch {
+        deleteUser(userId);
+        setUsers(getUsers());
+      }
+    } else {
+      deleteUser(userId);
+      setUsers(getUsers());
+    }
+
     addAuditLog('DELETE_USER', `Menghapus akun petugas: ${target.name} (@${target.username})`);
-    deleteUserFromHosting(userId, target.username).catch(() => {});
     refreshAllData();
     broadcastLocalChange();
-    showToast(`Akun petugas ${target.name} (@${target.username}) berhasil dihapus.`, 'success');
+    showToast(`Akun petugas ${target.name} (@${target.username}) berhasil dihapus permanen dari server.`, 'success');
   };
 
   // Document Preview Open
@@ -807,6 +909,8 @@ export default function App() {
                   onSaveUser={handleSaveUser}
                   onDeleteUser={handleDeleteUser}
                   currentUser={currentUser}
+                  onRefreshUsers={() => fetchUsersFromServer(false)}
+                  isRefreshing={isRefreshingUsers}
                 />
               )}
 

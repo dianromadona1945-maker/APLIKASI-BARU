@@ -14,7 +14,7 @@ import {
   Clock,
 } from 'lucide-react';
 import { User, UserRole } from '../types';
-import { loginUser, saveUser, getDeletedUserIds } from '../services/storage';
+import { loginUser, saveUser, getDeletedUserIds, setServerUsers } from '../services/storage';
 import { loginWithHosting, pullUsersFromHosting } from '../services/mysqlSync';
 
 interface LoginViewProps {
@@ -31,19 +31,11 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, noticeMess
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    // Tarik akun petugas terbaru dari server hosting secara otomatis di latar belakang
+    // Tarik akun petugas terbaru dari server database MySQL sebagai sumber data utama
     pullUsersFromHosting()
       .then((remoteUsers) => {
         if (remoteUsers && Array.isArray(remoteUsers) && remoteUsers.length > 0) {
-          const deletedList = getDeletedUserIds();
-          remoteUsers.forEach((ru) => {
-            const isDel =
-              deletedList.includes((ru.id || '').toLowerCase()) ||
-              deletedList.includes((ru.username || '').toLowerCase().replace(/^@/, ''));
-            if (!isDel) {
-              saveUser(ru, false);
-            }
-          });
+          setServerUsers(remoteUsers);
         }
       })
       .catch(() => {});

@@ -409,6 +409,33 @@ export function initializeStorage(): void {
     localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
   } catch {}
 
+  // One-time cleanup for lingering test accounts to guarantee single source of truth
+  const cleanedUsersV4 = localStorage.getItem('arsip_users_cleaned_v4');
+  if (!cleanedUsersV4) {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEYS.USERS);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          const obsoleteUsernames = ['tu123', 'mila', 'tika', 'tika1'];
+          const filtered = parsed.filter(
+            (u: any) =>
+              u &&
+              !obsoleteUsernames.includes(
+                (u.username || '').toLowerCase().replace(/^@/, '')
+              )
+          );
+          if (filtered.length > 0) {
+            localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(filtered));
+          } else {
+            localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(INITIAL_USERS));
+          }
+        }
+      }
+    } catch {}
+    localStorage.setItem('arsip_users_cleaned_v4', 'true');
+  }
+
   const isInitialized = localStorage.getItem(STORAGE_KEYS.INITIALIZED);
   if (!isInitialized) {
     // Seed users
@@ -899,6 +926,25 @@ export function deleteUser(userId: string): { success: boolean; message: string 
   const updated = users.filter((u) => u.id !== userId);
   localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updated));
   return { success: true, message: `Akun petugas ${target.name} (@${target.username}) berhasil dihapus.` };
+}
+
+/**
+ * Sets authoritative users list from the database server.
+ * The database server is the Single Source of Truth.
+ */
+export function setServerUsers(users: User[]): void {
+  if (Array.isArray(users) && users.length > 0) {
+    const deletedList = getDeletedUserIds();
+    const valid = users.filter(
+      (u) =>
+        u &&
+        (u.role === 'admin' || u.role === 'petugas_tu') &&
+        !deletedList.includes((u.id || '').toLowerCase()) &&
+        !deletedList.includes((u.username || '').toLowerCase().replace(/^@/, ''))
+    );
+    const finalUsers = valid.length > 0 ? valid : users;
+    localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(finalUsers));
+  }
 }
 
 export function getCurrentUser(): User {
@@ -1527,31 +1573,11 @@ export function smartMergeRemoteData(data: {
     localStorage.setItem(STORAGE_KEYS.LOGS, JSON.stringify(finalLogs));
   }
 
-  // 6. Merge Users
+  // 6. User accounts: DATABASE SERVER IS THE SINGLE SOURCE OF TRUTH!
+  // NEVER merge old local users back, as that causes deleted users to resurrect!
+  // Overwrite directly with authoritative remote users list from the database.
   if (data.users && Array.isArray(data.users) && data.users.length > 0) {
-    const localUsers = getUsers();
-    const userMap = new Map<string, User>();
-    localUsers.forEach((u) => userMap.set(u.id, u));
-
-    data.users.forEach((rUser) => {
-      if (!rUser || !rUser.id || !rUser.username) return;
-      if (!userMap.has(rUser.id)) {
-        const existingByName = Array.from(userMap.values()).find(
-          (u) => u.username.toLowerCase() === rUser.username.toLowerCase()
-        );
-        if (!existingByName) {
-          userMap.set(rUser.id, rUser);
-        }
-      } else {
-        const lUser = userMap.get(rUser.id)!;
-        userMap.set(rUser.id, {
-          ...rUser,
-          password: lUser.password || rUser.password,
-        });
-      }
-    });
-
-    localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(Array.from(userMap.values())));
+    setServerUsers(data.users);
   }
 
   return {

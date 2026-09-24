@@ -5,6 +5,7 @@ import {
   getDocuments,
   getAcademicYears,
   getUsers,
+  getCurrentUser,
   getDeletedStudentIds,
   getDeletedDocIds,
   getDeletedUserIds,
@@ -64,6 +65,22 @@ export function saveLastKnownDocSyncTimestamp(ts: string): void {
   } catch {}
 }
 
+const LAST_KNOWN_USER_UPDATE_KEY = 'arsip_last_user_sync_ts';
+
+export function getLastKnownUserSyncTimestamp(): string {
+  try {
+    return localStorage.getItem(LAST_KNOWN_USER_UPDATE_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
+export function saveLastKnownUserSyncTimestamp(ts: string): void {
+  try {
+    localStorage.setItem(LAST_KNOWN_USER_UPDATE_KEY, ts);
+  } catch {}
+}
+
 export function getSyncConfig(): RumahwebSyncConfig {
   try {
     const raw = localStorage.getItem(SYNC_CONFIG_KEY);
@@ -107,9 +124,10 @@ export function saveSyncConfig(config: Partial<RumahwebSyncConfig>): RumahwebSyn
  */
 export async function checkServerSyncStatus(): Promise<{
   success: boolean;
-  counts?: { students: number; documents: number; academicYears: number };
+  counts?: { students: number; documents: number; academicYears: number; users?: number };
   lastStudentUpdate?: string;
   lastDocUpdate?: string;
+  lastUserUpdate?: string;
   serverTime?: string;
   error?: string;
 }> {
@@ -121,14 +139,17 @@ export async function checkServerSyncStatus(): Promise<{
   try {
     const cleanUrl = config.apiUrl.trim();
     const url = new URL(cleanUrl);
-    // Primary: use action=check_sync which returns real-time max upload_date for documents and updated_at for students
+    // Primary: use action=check_sync with anti-cache timestamp
     url.searchParams.set('action', 'check_sync');
+    url.searchParams.set('_t', Date.now().toString());
 
     let response = await fetch(url.toString(), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'X-Sync-Key': config.syncKey.trim(),
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
       },
       body: JSON.stringify({ key: config.syncKey.trim() }),
     });
@@ -140,14 +161,17 @@ export async function checkServerSyncStatus(): Promise<{
       } catch {}
     }
 
-    // Fallback: if check_sync failed, returned HTTP error, or returned success:false (e.g. older api.php without check_sync), fallback to action=test!
+    // Fallback: if check_sync failed, returned HTTP error, or returned success:false, fallback to action=test!
     if (!response.ok || !data || !data.success) {
       url.searchParams.set('action', 'test');
+      url.searchParams.set('_t', Date.now().toString());
       response = await fetch(url.toString(), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'X-Sync-Key': config.syncKey.trim(),
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache',
         },
         body: JSON.stringify({ key: config.syncKey.trim() }),
       });
@@ -171,6 +195,7 @@ export async function checkServerSyncStatus(): Promise<{
         counts: data.counts,
         lastStudentUpdate: data.lastStudentUpdate || '',
         lastDocUpdate: data.lastDocUpdate || '',
+        lastUserUpdate: data.lastUserUpdate || '',
         serverTime: data.server_time || '',
       };
     }
@@ -635,18 +660,14 @@ export async function executeTwoWaySync(): Promise<{
       }
     }
 
-    // 6. Push all local users to cloud to ensure every added officer can log in from any device
-    try {
-      const localUsers = getUsers();
-      if (localUsers.length > 0) {
-        await pushUsersToHosting(localUsers);
-      }
-    } catch {}
+    // Note: User accounts are managed directly and strictly via single source of truth (save_user and delete_user).
+    // NEVER push local users here, which would resurrect deleted accounts from other computers!
 
     const now = new Date().toISOString();
-    // Save latest document and student timestamps from remote data
+    // Save latest document, student, and user timestamps from remote data
     const remoteDocs = Array.isArray(pullResult.data.documents) ? pullResult.data.documents : [];
     const remoteStudents = Array.isArray(pullResult.data.students) ? pullResult.data.students : [];
+    const remoteUsers = Array.isArray(pullResult.data.users) ? pullResult.data.users : [];
     const latestDocUpdate = remoteDocs.reduce((max: string, d: any) => {
       const ts = d.uploadedAt || d.upload_date || '';
       return ts > max ? ts : max;
@@ -655,9 +676,14 @@ export async function executeTwoWaySync(): Promise<{
       const ts = s.updatedAt || s.createdAt || s.updated_at || '';
       return ts > max ? ts : max;
     }, '');
+    const latestUserUpdate = remoteUsers.reduce((max: string, u: any) => {
+      const ts = u.updatedAt || u.updated_at || '';
+      return ts > max ? ts : max;
+    }, '');
 
     saveLastKnownSyncTimestamp(latestStudentUpdate || now);
     saveLastKnownDocSyncTimestamp(latestDocUpdate || '');
+    if (latestUserUpdate) saveLastKnownUserSyncTimestamp(latestUserUpdate);
 
     const finalDocsList = getDocuments();
     const msg = `Sinkronisasi Live sukses: ${mergeResult.mergedStudents.length} siswa (${pushedCount} dikirim, ${mergeResult.remoteStudentsAddedOrUpdated} ditarik), ${finalDocsList.length} dokumen (${pushedDocsCount} dikirim, ${mergeResult.remoteDocsAddedOrUpdated} ditarik)`;
@@ -708,14 +734,30 @@ export async function saveUserToHosting(user: User): Promise<{ success: boolean;
     return { success: false, message: 'URL API Rumahweb belum dikonfigurasi.' };
   }
 
+  const currentAdmin = getCurrentUser();
+  console.log('[CREATE/UPDATE USER] Request ke database MySQL:', {
+    action: 'save_user',
+    userId: user.id,
+    username: user.username,
+    role: user.role,
+    name: user.name,
+    adminId: currentAdmin?.id || 'admin',
+    adminUsername: currentAdmin?.username || 'admin',
+    timestamp: new Date().toISOString(),
+    status: 'PENDING',
+  });
+
   try {
     const url = new URL(config.apiUrl);
     url.searchParams.set('action', 'save_user');
+    url.searchParams.set('_t', Date.now().toString());
     const response = await fetch(url.toString(), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'X-Sync-Key': config.syncKey.trim(),
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
       },
       body: JSON.stringify({
         key: config.syncKey.trim(),
@@ -725,11 +767,29 @@ export async function saveUserToHosting(user: User): Promise<{ success: boolean;
 
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
+
+    console.log('[CREATE/UPDATE USER] Response dari database MySQL:', {
+      userId: user.id,
+      username: user.username,
+      status: data.success ? 'SUCCESS' : 'FAILED',
+      timestamp: new Date().toISOString(),
+      adminId: currentAdmin?.id || 'admin',
+      response: data,
+    });
+
     return {
       success: !!data.success,
       message: data.message || `Akun petugas ${user.name} berhasil disimpan di cloud.`,
     };
   } catch (err: any) {
+    console.error('[CREATE/UPDATE USER] Error koneksi:', {
+      userId: user.id,
+      username: user.username,
+      status: 'FAILED',
+      error: err.message || String(err),
+      adminId: currentAdmin?.id || 'admin',
+      timestamp: new Date().toISOString(),
+    });
     return { success: false, message: `Gagal menyimpan user ke cloud: ${err.message || String(err)}` };
   }
 }
@@ -740,29 +800,63 @@ export async function deleteUserFromHosting(userId: string, username?: string): 
     return { success: false, message: 'URL API Rumahweb belum dikonfigurasi.' };
   }
 
+  const currentAdmin = getCurrentUser();
+  const cleanU = username ? username.replace(/^@/, '') : '';
+
+  console.log('[DELETE USER] Request ke database MySQL:', {
+    action: 'delete_user',
+    userId,
+    username: cleanU,
+    adminId: currentAdmin?.id || 'admin',
+    adminUsername: currentAdmin?.username || 'admin',
+    timestamp: new Date().toISOString(),
+    status: 'PENDING',
+  });
+
   try {
     const url = new URL(config.apiUrl);
     url.searchParams.set('action', 'delete_user');
+    url.searchParams.set('_t', Date.now().toString());
     const response = await fetch(url.toString(), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'X-Sync-Key': config.syncKey.trim(),
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
       },
       body: JSON.stringify({
         key: config.syncKey.trim(),
         userId,
-        username: username ? username.replace(/^@/, '') : '',
+        username: cleanU,
       }),
     });
 
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
+
+    console.log('[DELETE USER] Response dari database MySQL:', {
+      userId,
+      username: cleanU,
+      status: data.success ? 'SUCCESS' : 'FAILED',
+      adminId: currentAdmin?.id || 'admin',
+      timestamp: new Date().toISOString(),
+      response: data,
+    });
+
     return {
       success: !!data.success,
       message: data.message || `Akun petugas berhasil dihapus dari cloud.`,
     };
   } catch (err: any) {
+    console.error('[DELETE USER] Error koneksi:', {
+      userId,
+      username: cleanU,
+      status: 'FAILED',
+      error: err.message || String(err),
+      adminId: currentAdmin?.id || 'admin',
+      timestamp: new Date().toISOString(),
+    });
     return { success: false, message: `Gagal menghapus user dari cloud: ${err.message || String(err)}` };
   }
 }
@@ -860,31 +954,62 @@ export async function pullUsersFromHosting(): Promise<User[]> {
   const config = getSyncConfig();
   if (!config.apiUrl) return [];
 
+  const currentAdmin = getCurrentUser();
+  console.log('[GET USERS] Request: Mengambil daftar pengguna dari server database MySQL...', {
+    action: 'pull_users',
+    adminId: currentAdmin?.id || 'admin',
+    adminUsername: currentAdmin?.username || 'admin',
+    timestamp: new Date().toISOString(),
+    status: 'PENDING',
+  });
+
   try {
     const url = new URL(config.apiUrl);
     url.searchParams.set('action', 'pull_users');
+    url.searchParams.set('_t', Date.now().toString());
     const response = await fetch(url.toString(), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'X-Sync-Key': config.syncKey.trim(),
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
       },
       body: JSON.stringify({ key: config.syncKey.trim() }),
     });
 
-    if (!response.ok) return [];
+    if (!response.ok) {
+      console.warn('[GET USERS] Response HTTP error:', response.status);
+      return [];
+    }
     const data = await response.json();
     if (data.success && Array.isArray(data.users)) {
       const deletedList = getDeletedUserIds();
-      return data.users.filter(
+      const validUsers = data.users.filter(
         (u: any) =>
           u &&
           !deletedList.includes((u.id || '').toLowerCase()) &&
           !deletedList.includes((u.username || '').toLowerCase().replace(/^@/, ''))
       );
+
+      console.log('[GET USERS] Response sukses dari server database MySQL:', {
+        count: validUsers.length,
+        users: validUsers.map((u: User) => ({ id: u.id, username: u.username, role: u.role })),
+        adminId: currentAdmin?.id || 'admin',
+        timestamp: new Date().toISOString(),
+        status: 'SUCCESS',
+      });
+
+      return validUsers;
     }
     return [];
-  } catch {
+  } catch (err: any) {
+    console.error('[GET USERS] Gagal mengambil pengguna:', {
+      error: err.message || String(err),
+      adminId: currentAdmin?.id || 'admin',
+      timestamp: new Date().toISOString(),
+      status: 'FAILED',
+    });
     return [];
   }
 }
@@ -898,11 +1023,14 @@ export async function pushUsersToHosting(users: User[]): Promise<{ success: bool
   try {
     const url = new URL(config.apiUrl);
     url.searchParams.set('action', 'push_users');
+    url.searchParams.set('_t', Date.now().toString());
     const response = await fetch(url.toString(), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'X-Sync-Key': config.syncKey.trim(),
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
       },
       body: JSON.stringify({
         key: config.syncKey.trim(),
@@ -941,12 +1069,15 @@ export async function pushAllDataToHosting(payload: {
   try {
     const url = new URL(config.apiUrl);
     url.searchParams.set('action', 'push_all');
+    url.searchParams.set('_t', Date.now().toString());
 
     const response = await fetch(url.toString(), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'X-Sync-Key': config.syncKey.trim(),
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
       },
       body: JSON.stringify({
         key: config.syncKey.trim(),
@@ -954,7 +1085,7 @@ export async function pushAllDataToHosting(payload: {
         documents: payload.documents,
         academicYears: payload.academicYears,
         logs: payload.logs || [],
-        users: payload.users || getUsers(),
+        users: payload.users || undefined, // CRITICAL: NEVER send localStorage users blindly!
         deletedIds: payload.mirror === true ? getDeletedStudentIds() : [],
         deletedDocIds: payload.mirror === true ? getDeletedDocIds() : [],
         clear_all: payload.clear_all === true,
@@ -1204,8 +1335,11 @@ define('SYNC_KEY', '${key}');
 // Header CORS agar dapat diakses dari browser aplikasi
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
-header('Access-Control-Allow-Headers: Content-Type, Authorization, X-Sync-Key');
+header('Access-Control-Allow-Headers: Content-Type, Authorization, X-Sync-Key, Cache-Control, Pragma');
 header('Content-Type: application/json; charset=utf-8');
+header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+header('Cache-Control: post-check=0, pre-check=0', false);
+header('Pragma: no-cache');
 
 // Tangani permintaan preflight OPTIONS dari browser
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
@@ -1434,9 +1568,6 @@ function initDatabaseTables($pdo) {
             $defaultUsers = [
                 ['id' => 'usr-admin-01', 'username' => 'admin', 'name' => 'Dian Romadona, S.Pd.', 'role' => 'admin', 'email' => 'dian.romadona@sekolah.sch.id', 'nip' => '', 'password' => 'admin', 'active' => 1],
                 ['id' => 'usr-tu-01', 'username' => 'petugas_tu', 'name' => 'Mamat Miftahurrahmat, S.Pd.', 'role' => 'petugas_tu', 'email' => 'mamat.miftahurrahmat@sekolah.sch.id', 'nip' => '', 'password' => 'tu123', 'active' => 1],
-                ['id' => 'usr-tu-123', 'username' => 'tu123', 'name' => 'Mamat Miftahurrahmat, S.Pd.', 'role' => 'petugas_tu', 'email' => 'mamat.miftahurrahmat@sekolah.sch.id', 'nip' => '', 'password' => '123456789', 'active' => 1],
-                ['id' => 'usr-tu-mila', 'username' => 'mila', 'name' => 'mila', 'role' => 'petugas_tu', 'email' => 'mila@sekolah.sch.id', 'nip' => '', 'password' => 'mila', 'active' => 1],
-                ['id' => 'usr-tu-tika', 'username' => 'tika1', 'name' => 'tika', 'role' => 'petugas_tu', 'email' => 'tika1@sekolah.sch.id', 'nip' => '', 'password' => 'tika', 'active' => 1],
             ];
             $ins = $pdo->prepare("INSERT IGNORE INTO \`arsip_users\` (\`id\`, \`username\`, \`name\`, \`role\`, \`email\`, \`nip\`, \`password\`, \`active\`, \`last_login\`, \`raw_json\`, \`updated_at\`) VALUES (:id, :username, :name, :role, :email, :nip, :password, :active, 'Baru Dibuat', :raw_json, NOW())");
             foreach ($defaultUsers as $du) {
@@ -2133,8 +2264,8 @@ function handleCheckSync($pdo) {
     $stmt3 = $pdo->query("SELECT COUNT(*) AS total FROM \`arsip_academic_years\`");
     $totalYears = (int)$stmt3->fetchColumn();
 
-    $stmt4 = $pdo->query("SELECT COUNT(*) AS total FROM \`arsip_users\`");
-    $totalUsers = (int)$stmt4->fetchColumn();
+    $stmt4 = $pdo->query("SELECT COUNT(*) AS total, MAX(\`updated_at\`) AS last_updated FROM \`arsip_users\`");
+    $uInfo = $stmt4->fetch();
 
     echo json_encode([
         'success' => true,
@@ -2142,10 +2273,11 @@ function handleCheckSync($pdo) {
             'students' => (int)($sInfo['total'] ?? 0),
             'documents' => (int)($dInfo['total'] ?? 0),
             'academicYears' => $totalYears,
-            'users' => $totalUsers,
+            'users' => (int)($uInfo['total'] ?? 0),
         ],
         'lastStudentUpdate' => $sInfo['last_updated'] ?? '',
         'lastDocUpdate' => $dInfo['last_doc'] ?? '',
+        'lastUserUpdate' => $uInfo['last_updated'] ?? '',
         'server_time' => date('Y-m-d H:i:s'),
     ]);
 }
@@ -2159,6 +2291,8 @@ function handleSaveUser($pdo, $body) {
     }
 
     try {
+        $now = date('c');
+        $cleanUsername = strtolower(ltrim(trim($user['username']), '@'));
         $stmt = $pdo->prepare("INSERT INTO \`arsip_users\` (
             \`id\`, \`username\`, \`name\`, \`role\`, \`email\`, \`nip\`, \`password\`, \`active\`, \`last_login\`, \`raw_json\`, \`updated_at\`
         ) VALUES (
@@ -2177,7 +2311,7 @@ function handleSaveUser($pdo, $body) {
 
         $stmt->execute([
             ':id' => $user['id'],
-            ':username' => $user['username'],
+            ':username' => $cleanUsername,
             ':name' => $user['name'] ?? '',
             ':role' => $user['role'] ?? 'petugas_tu',
             ':email' => $user['email'] ?? '',
@@ -2186,13 +2320,14 @@ function handleSaveUser($pdo, $body) {
             ':active' => ($user['active'] ?? true) ? 1 : 0,
             ':last_login' => $user['lastLogin'] ?? '',
             ':raw_json' => json_encode($user),
-            ':updated_at' => date('c'),
+            ':updated_at' => $now,
         ]);
 
         echo json_encode([
             'success' => true,
             'message' => 'Akun petugas ' . ($user['name'] ?? '') . ' berhasil disimpan di MySQL cloud.',
-            'userId' => $user['id']
+            'userId' => $user['id'],
+            'timestamp' => $now,
         ]);
     } catch (Exception $e) {
         http_response_code(500);
@@ -2201,29 +2336,37 @@ function handleSaveUser($pdo, $body) {
 }
 
 function handleDeleteUser($pdo, $body) {
-    $userId = $body['userId'] ?? '';
+    $userId = trim($body['userId'] ?? '');
     $username = trim($body['username'] ?? '');
     if (empty($userId) && empty($username)) {
         http_response_code(400);
         echo json_encode(['success' => false, 'error' => 'ID user tidak boleh kosong']);
         return;
     }
-    if ($userId === 'usr-admin-01' || strtolower($username) === 'admin') {
+    $cleanU = strtolower(ltrim($username, '@'));
+    if ($userId === 'usr-admin-01' || $cleanU === 'admin') {
         http_response_code(403);
         echo json_encode(['success' => false, 'error' => 'Akun admin utama tidak boleh dihapus']);
         return;
     }
 
     try {
+        $now = date('c');
         if (!empty($userId)) {
             $stmt = $pdo->prepare("DELETE FROM \`arsip_users\` WHERE \`id\` = :id");
             $stmt->execute([':id' => $userId]);
         }
-        if (!empty($username)) {
+        if (!empty($cleanU)) {
             $stmt = $pdo->prepare("DELETE FROM \`arsip_users\` WHERE LOWER(\`username\`) = :u OR LOWER(\`username\`) = :u2");
-            $stmt->execute([':u' => strtolower($username), ':u2' => '@' . strtolower($username)]);
+            $stmt->execute([':u' => $cleanU, ':u2' => '@' . $cleanU]);
         }
-        echo json_encode(['success' => true, 'message' => 'Akun petugas berhasil dihapus dari cloud']);
+        echo json_encode([
+            'success' => true,
+            'message' => 'Akun petugas berhasil dihapus permanen dari server MySQL cloud.',
+            'userId' => $userId,
+            'username' => $cleanU,
+            'timestamp' => $now,
+        ]);
     } catch (Exception $e) {
         http_response_code(500);
         echo json_encode(['success' => false, 'error' => 'Gagal menghapus user: ' . $e->getMessage()]);
