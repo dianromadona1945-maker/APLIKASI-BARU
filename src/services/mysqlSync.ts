@@ -967,21 +967,46 @@ export async function pullUsersFromHosting(): Promise<User[]> {
     const url = new URL(config.apiUrl);
     url.searchParams.set('action', 'pull_users');
     url.searchParams.set('_t', Date.now().toString());
-    const response = await fetch(url.toString(), {
+
+    // Send request using standard headers for best cross-origin server compatibility
+    let response = await fetch(url.toString(), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'X-Sync-Key': config.syncKey.trim(),
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
-        'Pragma': 'no-cache',
       },
       body: JSON.stringify({ key: config.syncKey.trim() }),
     });
 
     if (!response.ok) {
-      console.warn('[GET USERS] Response HTTP error:', response.status);
+      console.warn('[GET USERS] Primary response not ok (status ' + response.status + '), trying fallback...');
+      // Fallback: try via action=pull_all if custom action isn't handled by older api.php
+      const fallbackUrl = new URL(config.apiUrl);
+      fallbackUrl.searchParams.set('action', 'pull_all');
+      response = await fetch(fallbackUrl.toString(), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Sync-Key': config.syncKey.trim(),
+        },
+        body: JSON.stringify({ key: config.syncKey.trim() }),
+      });
+      if (response.ok) {
+        const fallbackData = await response.json();
+        if (fallbackData.success && fallbackData.data && Array.isArray(fallbackData.data.users)) {
+          const deletedList = getDeletedUserIds();
+          const validUsers = fallbackData.data.users.filter(
+            (u: any) =>
+              u &&
+              !deletedList.includes((u.id || '').toLowerCase()) &&
+              !deletedList.includes((u.username || '').toLowerCase().replace(/^@/, ''))
+          );
+          return validUsers;
+        }
+      }
       return [];
     }
+
     const data = await response.json();
     if (data.success && Array.isArray(data.users)) {
       const deletedList = getDeletedUserIds();
@@ -1004,11 +1029,37 @@ export async function pullUsersFromHosting(): Promise<User[]> {
     }
     return [];
   } catch (err: any) {
-    console.error('[GET USERS] Gagal mengambil pengguna:', {
+    // Attempt fallback to pull_all in case of network or parsing error
+    try {
+      const fallbackUrl = new URL(config.apiUrl);
+      fallbackUrl.searchParams.set('action', 'pull_all');
+      const fallbackRes = await fetch(fallbackUrl.toString(), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Sync-Key': config.syncKey.trim(),
+        },
+        body: JSON.stringify({ key: config.syncKey.trim() }),
+      });
+      if (fallbackRes.ok) {
+        const fallbackData = await fallbackRes.json();
+        if (fallbackData.success && fallbackData.data && Array.isArray(fallbackData.data.users)) {
+          const deletedList = getDeletedUserIds();
+          return fallbackData.data.users.filter(
+            (u: any) =>
+              u &&
+              !deletedList.includes((u.id || '').toLowerCase()) &&
+              !deletedList.includes((u.username || '').toLowerCase().replace(/^@/, ''))
+          );
+        }
+      }
+    } catch {}
+
+    console.warn('[GET USERS] Gagal mengambil pengguna dari server hosting:', {
       error: err.message || String(err),
       adminId: currentAdmin?.id || 'admin',
       timestamp: new Date().toISOString(),
-      status: 'FAILED',
+      status: 'OFFLINE_OR_PENDING_API_UPDATE',
     });
     return [];
   }
