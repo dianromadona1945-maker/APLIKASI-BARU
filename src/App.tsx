@@ -33,6 +33,7 @@ import {
   saveDocumentToHosting,
   saveUserToHosting,
   deleteUserFromHosting,
+  pullUsersFromHosting,
   checkServerSyncStatus,
   getIsSyncInProgress,
   getLastKnownSyncTimestamp,
