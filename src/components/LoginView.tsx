@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   ShieldCheck,
   Lock,
@@ -14,7 +14,8 @@ import {
   Clock,
 } from 'lucide-react';
 import { User, UserRole } from '../types';
-import { loginUser } from '../services/storage';
+import { loginUser, saveUser } from '../services/storage';
+import { loginWithHosting, pullUsersFromHosting } from '../services/mysqlSync';
 
 interface LoginViewProps {
   onLoginSuccess: (user: User) => void;
@@ -30,14 +31,28 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, noticeMess
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  useEffect(() => {
+    // Tarik akun petugas terbaru dari server hosting secara otomatis di latar belakang
+    pullUsersFromHosting()
+      .then((remoteUsers) => {
+        if (remoteUsers && Array.isArray(remoteUsers) && remoteUsers.length > 0) {
+          remoteUsers.forEach((ru) => saveUser(ru));
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   const handleRoleSelect = (role: UserRole) => {
     setSelectedRole(role);
     setErrorMessage(null);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!username.trim() || !password.trim()) {
+    const cleanUsername = username.trim().replace(/^@/, '');
+    const cleanPassword = password.trim();
+
+    if (!cleanUsername || !cleanPassword) {
       setErrorMessage('Mohon lengkapi username dan kata sandi.');
       return;
     }
@@ -45,16 +60,37 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, noticeMess
     setIsLoading(true);
     setErrorMessage(null);
 
-    setTimeout(() => {
-      const result = loginUser(username.trim(), password.trim());
+    // 1. Coba login lokal terlebih dahulu (cepat dan mendukung akses offline)
+    const localResult = loginUser(cleanUsername, cleanPassword);
+    if (localResult.success && localResult.user) {
       setIsLoading(false);
+      onLoginSuccess(localResult.user);
+      return;
+    }
 
-      if (result.success && result.user) {
-        onLoginSuccess(result.user);
-      } else {
-        setErrorMessage(result.error || 'Login gagal. Periksa username dan password Anda.');
+    // 2. Jika akun belum tersimpan di browser ini, lakukan verifikasi langsung ke server MySQL hosting
+    try {
+      const remoteLogin = await loginWithHosting(cleanUsername, cleanPassword);
+      if (remoteLogin.success && remoteLogin.user) {
+        saveUser(remoteLogin.user);
+        const retryResult = loginUser(cleanUsername, cleanPassword);
+        setIsLoading(false);
+        if (retryResult.success && retryResult.user) {
+          onLoginSuccess(retryResult.user);
+          return;
+        } else {
+          onLoginSuccess(remoteLogin.user);
+          return;
+        }
+      } else if (remoteLogin.error && !remoteLogin.error.includes('HTTP 404') && !remoteLogin.error.includes('Aksi tidak dikenal')) {
+        setIsLoading(false);
+        setErrorMessage(remoteLogin.error);
+        return;
       }
-    }, 350);
+    } catch {}
+
+    setIsLoading(false);
+    setErrorMessage(localResult.error || 'Login gagal. Periksa kembali username dan kata sandi Anda.');
   };
 
   return (

@@ -649,7 +649,7 @@ export default function App() {
     }
   };
 
-  const handleSaveUser = (user: User) => {
+  const handleSaveUser = async (user: User) => {
     const isExisting = users.some((u) => u.id === user.id);
     saveUser(user);
     if (currentUser.id === user.id) {
@@ -663,8 +663,24 @@ export default function App() {
         : `Menambahkan akun petugas baru: ${user.name} (${user.role})`
     );
     refreshAllData();
-    saveUserToHosting(user).catch(() => {});
-    showToast(isExisting ? `Profil & kata sandi ${user.name} berhasil diperbarui.` : 'Petugas baru berhasil didaftarkan.');
+    broadcastLocalChange();
+
+    showToast(
+      isExisting
+        ? `Profil & kata sandi ${user.name} berhasil diperbarui.`
+        : `Petugas baru "${user.name}" (@${user.username}) berhasil didaftarkan.`,
+      'success'
+    );
+
+    // Kirim akun petugas ke database MySQL cloud hosting
+    try {
+      const res = await saveUserToHosting(user);
+      if (!res.success && res.message?.includes('Aksi tidak dikenal')) {
+        showToast('Catatan: File api.php di cPanel belum diperbarui untuk multi-petugas. Silakan unduh api.php terbaru di menu Sinkronisasi Cloud.', 'error');
+      }
+    } catch {}
+
+    syncToCloudIfEnabled();
   };
 
   const handleDeleteUser = (userId: string) => {

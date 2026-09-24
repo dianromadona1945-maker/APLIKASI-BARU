@@ -634,6 +634,14 @@ export async function executeTwoWaySync(): Promise<{
       }
     }
 
+    // 6. Push all local users to cloud to ensure every added officer can log in from any device
+    try {
+      const localUsers = getUsers();
+      if (localUsers.length > 0) {
+        await pushUsersToHosting(localUsers);
+      }
+    } catch {}
+
     const now = new Date().toISOString();
     // Save latest document and student timestamps from remote data
     const remoteDocs = Array.isArray(pullResult.data.documents) ? pullResult.data.documents : [];
@@ -754,6 +762,114 @@ export async function deleteUserFromHosting(userId: string): Promise<{ success: 
     };
   } catch (err: any) {
     return { success: false, message: `Gagal menghapus user dari cloud: ${err.message || String(err)}` };
+  }
+}
+
+export async function loginWithHosting(
+  usernameInput: string,
+  passwordInput: string
+): Promise<{ success: boolean; user?: User; error?: string }> {
+  const config = getSyncConfig();
+  if (!config.apiUrl) {
+    return { success: false, error: 'URL API MySQL belum dikonfigurasi.' };
+  }
+
+  const cleanUsername = usernameInput.trim().replace(/^@/, '');
+  const cleanPassword = passwordInput.trim();
+
+  try {
+    const url = new URL(config.apiUrl);
+    url.searchParams.set('action', 'login');
+    const response = await fetch(url.toString(), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Sync-Key': config.syncKey.trim(),
+      },
+      body: JSON.stringify({
+        key: config.syncKey.trim(),
+        username: cleanUsername,
+        password: cleanPassword,
+      }),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      let parsedErr = `Server error (HTTP ${response.status})`;
+      try {
+        const j = JSON.parse(errText);
+        if (j.error) parsedErr = j.error;
+      } catch {}
+      return { success: false, error: parsedErr };
+    }
+
+    const data = await response.json();
+    if (data.success && data.user) {
+      return { success: true, user: data.user };
+    } else {
+      return { success: false, error: data.error || 'Autentikasi akun di database cloud gagal.' };
+    }
+  } catch (err: any) {
+    return { success: false, error: `Gagal verifikasi ke server: ${err.message || String(err)}` };
+  }
+}
+
+export async function pullUsersFromHosting(): Promise<User[]> {
+  const config = getSyncConfig();
+  if (!config.apiUrl) return [];
+
+  try {
+    const url = new URL(config.apiUrl);
+    url.searchParams.set('action', 'pull_users');
+    const response = await fetch(url.toString(), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Sync-Key': config.syncKey.trim(),
+      },
+      body: JSON.stringify({ key: config.syncKey.trim() }),
+    });
+
+    if (!response.ok) return [];
+    const data = await response.json();
+    if (data.success && Array.isArray(data.users)) {
+      return data.users;
+    }
+    return [];
+  } catch {
+    return [];
+  }
+}
+
+export async function pushUsersToHosting(users: User[]): Promise<{ success: boolean; message: string }> {
+  const config = getSyncConfig();
+  if (!config.apiUrl || !users || users.length === 0) {
+    return { success: true, message: 'Tidak ada akun untuk disinkronkan.' };
+  }
+
+  try {
+    const url = new URL(config.apiUrl);
+    url.searchParams.set('action', 'push_users');
+    const response = await fetch(url.toString(), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Sync-Key': config.syncKey.trim(),
+      },
+      body: JSON.stringify({
+        key: config.syncKey.trim(),
+        users,
+      }),
+    });
+
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    return {
+      success: !!data.success,
+      message: data.message || `${users.length} akun petugas berhasil disimpan di cloud.`,
+    };
+  } catch (err: any) {
+    return { success: false, message: `Gagal mengirim akun ke server: ${err.message || String(err)}` };
   }
 }
 
@@ -1087,7 +1203,11 @@ if (!empty($_SERVER['HTTP_X_SYNC_KEY'])) {
     $clientKey = $_GET['key'];
 }
 
-if ($clientKey !== SYNC_KEY) {
+// Tangani Aksi (Action)
+$action = isset($_GET['action']) ? $_GET['action'] : (isset($body['action']) ? $body['action'] : 'test');
+
+// Login publik tidak memblokir pengguna valid jika sync key kosong di browser baru
+if ($action !== 'login' && $clientKey !== SYNC_KEY) {
     http_response_code(401);
     echo json_encode([
         'success' => false,
@@ -1096,10 +1216,18 @@ if ($clientKey !== SYNC_KEY) {
     exit;
 }
 
-// Tangani Aksi (Action)
-$action = isset($_GET['action']) ? $_GET['action'] : (isset($body['action']) ? $body['action'] : 'test');
-
 switch ($action) {
+    case 'login':
+        handleLogin($pdo, $body);
+        break;
+
+    case 'pull_users':
+        handlePullUsers($pdo);
+        break;
+
+    case 'push_users':
+        handlePushUsers($pdo, $body);
+        break;
     case 'check_sync':
         handleCheckSync($pdo);
         break;
@@ -1250,6 +1378,34 @@ function initDatabaseTables($pdo) {
         \`raw_json\` LONGTEXT DEFAULT NULL,
         \`updated_at\` VARCHAR(50) DEFAULT NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;");
+
+    // Otomatis seed akun admin dan default bila tabel masih kosong
+    try {
+        $uCount = (int)$pdo->query("SELECT COUNT(*) FROM \`arsip_users\`")->fetchColumn();
+        if ($uCount === 0) {
+            $defaultUsers = [
+                ['id' => 'usr-admin-01', 'username' => 'admin', 'name' => 'Dian Romadona, S.Pd.', 'role' => 'admin', 'email' => 'dian.romadona@sekolah.sch.id', 'nip' => '', 'password' => 'admin', 'active' => 1],
+                ['id' => 'usr-tu-01', 'username' => 'petugas_tu', 'name' => 'Mamat Miftahurrahmat, S.Pd.', 'role' => 'petugas_tu', 'email' => 'mamat.miftahurrahmat@sekolah.sch.id', 'nip' => '', 'password' => 'tu123', 'active' => 1],
+                ['id' => 'usr-tu-123', 'username' => 'tu123', 'name' => 'Mamat Miftahurrahmat, S.Pd.', 'role' => 'petugas_tu', 'email' => 'mamat.miftahurrahmat@sekolah.sch.id', 'nip' => '', 'password' => '123456789', 'active' => 1],
+                ['id' => 'usr-tu-mila', 'username' => 'mila', 'name' => 'mila', 'role' => 'petugas_tu', 'email' => 'mila@sekolah.sch.id', 'nip' => '', 'password' => 'mila', 'active' => 1],
+                ['id' => 'usr-tu-tika', 'username' => 'tika1', 'name' => 'tika', 'role' => 'petugas_tu', 'email' => 'tika1@sekolah.sch.id', 'nip' => '', 'password' => 'tika', 'active' => 1],
+            ];
+            $ins = $pdo->prepare("INSERT IGNORE INTO \`arsip_users\` (\`id\`, \`username\`, \`name\`, \`role\`, \`email\`, \`nip\`, \`password\`, \`active\`, \`last_login\`, \`raw_json\`, \`updated_at\`) VALUES (:id, :username, :name, :role, :email, :nip, :password, :active, 'Baru Dibuat', :raw_json, NOW())");
+            foreach ($defaultUsers as $du) {
+                $ins->execute([
+                    ':id' => $du['id'],
+                    ':username' => $du['username'],
+                    ':name' => $du['name'],
+                    ':role' => $du['role'],
+                    ':email' => $du['email'],
+                    ':nip' => $du['nip'],
+                    ':password' => $du['password'],
+                    ':active' => 1,
+                    ':raw_json' => json_encode($du),
+                ]);
+            }
+        }
+    } catch (Exception $e) {}
 }
 
 function handleTest($pdo) {
@@ -2037,6 +2193,161 @@ function handleDeleteStudent($pdo, $body) {
             'success' => false,
             'error' => 'ID Siswa tidak valid.'
         ]);
+    }
+}
+
+function handleLogin($pdo, $body) {
+    $rawUsername = trim($body['username'] ?? '');
+    $password = trim($body['password'] ?? '');
+    $cleanUsername = strtolower(ltrim($rawUsername, '@'));
+
+    if (empty($cleanUsername) || empty($password)) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'error' => 'Username dan kata sandi tidak boleh kosong.']);
+        return;
+    }
+
+    try {
+        $stmt = $pdo->prepare("SELECT * FROM \`arsip_users\` WHERE LOWER(\`username\`) = :u1 OR LOWER(\`email\`) = :u2 OR LOWER(CONCAT('@', \`username\`)) = :u3 LIMIT 1");
+        $stmt->execute([
+            ':u1' => $cleanUsername,
+            ':u2' => $cleanUsername,
+            ':u3' => '@' . $cleanUsername,
+        ]);
+        $row = $stmt->fetch();
+
+        if (!$row) {
+            echo json_encode([
+                'success' => false,
+                'error' => 'Username atau email "' . htmlspecialchars($rawUsername) . '" tidak terdaftar dalam sistem.',
+            ]);
+            return;
+        }
+
+        if (trim($row['password']) !== $password) {
+            echo json_encode([
+                'success' => false,
+                'error' => 'Kata sandi tidak sesuai. Silakan periksa kembali kata sandi Anda.',
+            ]);
+            return;
+        }
+
+        if (isset($row['active']) && (int)$row['active'] === 0) {
+            echo json_encode([
+                'success' => false,
+                'error' => 'Akun petugas ini sedang dinonaktifkan oleh Administrator.',
+            ]);
+            return;
+        }
+
+        // Update last login
+        $nowStr = date('d M Y H.i') . ' WIB';
+        $upd = $pdo->prepare("UPDATE \`arsip_users\` SET \`last_login\` = :ll WHERE \`id\` = :id");
+        $upd->execute([':ll' => $nowStr, ':id' => $row['id']]);
+
+        $user = [
+            'id' => $row['id'],
+            'username' => $row['username'],
+            'name' => $row['name'],
+            'role' => $row['role'],
+            'email' => $row['email'] ?? '',
+            'nip' => $row['nip'] ?? '',
+            'password' => $row['password'],
+            'active' => true,
+            'lastLogin' => $nowStr,
+        ];
+
+        echo json_encode([
+            'success' => true,
+            'message' => 'Login berhasil!',
+            'user' => $user,
+        ]);
+    } catch (Exception $e) {
+        http_response_code(500);
+        echo json_encode(['success' => false, 'error' => 'Gagal verifikasi login ke server: ' . $e->getMessage()]);
+    }
+}
+
+function handlePullUsers($pdo) {
+    try {
+        $stmt = $pdo->query("SELECT * FROM \`arsip_users\` ORDER BY \`id\` ASC");
+        $rows = $stmt->fetchAll();
+        $users = [];
+        foreach ($rows as $r) {
+            if (!empty($r['raw_json'])) {
+                $decoded = json_decode($r['raw_json'], true);
+                if (is_array($decoded) && !empty($decoded['id'])) {
+                    $users[] = $decoded;
+                    continue;
+                }
+            }
+            $users[] = [
+                'id' => $r['id'],
+                'username' => $r['username'],
+                'name' => $r['name'],
+                'role' => $r['role'],
+                'email' => $r['email'] ?? '',
+                'nip' => $r['nip'] ?? '',
+                'password' => $r['password'] ?? '',
+                'active' => (bool)($r['active'] ?? 1),
+                'lastLogin' => $r['last_login'] ?? '',
+            ];
+        }
+        echo json_encode([
+            'success' => true,
+            'users' => $users,
+            'count' => count($users),
+        ]);
+    } catch (Exception $e) {
+        http_response_code(500);
+        echo json_encode(['success' => false, 'error' => 'Gagal mengambil data user: ' . $e->getMessage()]);
+    }
+}
+
+function handlePushUsers($pdo, $body) {
+    $users = isset($body['users']) && is_array($body['users']) ? $body['users'] : [];
+    if (empty($users)) {
+        echo json_encode(['success' => true, 'message' => 'Tidak ada user untuk disimpan.', 'saved' => 0]);
+        return;
+    }
+    try {
+        $stmt = $pdo->prepare("INSERT INTO \`arsip_users\` (
+            \`id\`, \`username\`, \`name\`, \`role\`, \`email\`, \`nip\`, \`password\`, \`active\`, \`last_login\`, \`raw_json\`, \`updated_at\`
+        ) VALUES (
+            :id, :username, :name, :role, :email, :nip, :password, :active, :last_login, :raw_json, NOW()
+        ) ON DUPLICATE KEY UPDATE
+            \`username\` = VALUES(\`username\`),
+            \`name\` = VALUES(\`name\`),
+            \`role\` = VALUES(\`role\`),
+            \`email\` = VALUES(\`email\`),
+            \`nip\` = VALUES(\`nip\`),
+            \`password\` = VALUES(\`password\`),
+            \`active\` = VALUES(\`active\`),
+            \`raw_json\` = VALUES(\`raw_json\`),
+            \`updated_at\` = NOW()");
+
+        $count = 0;
+        foreach ($users as $u) {
+            if (!empty($u['id']) && !empty($u['username'])) {
+                $stmt->execute([
+                    ':id' => $u['id'],
+                    ':username' => ltrim($u['username'], '@'),
+                    ':name' => $u['name'] ?? '',
+                    ':role' => $u['role'] ?? 'petugas_tu',
+                    ':email' => $u['email'] ?? '',
+                    ':nip' => $u['nip'] ?? '',
+                    ':password' => $u['password'] ?? ($u['role'] === 'admin' ? 'admin' : 'tu123'),
+                    ':active' => ($u['active'] ?? true) ? 1 : 0,
+                    ':last_login' => $u['lastLogin'] ?? '',
+                    ':raw_json' => json_encode($u),
+                ]);
+                $count++;
+            }
+        }
+        echo json_encode(['success' => true, 'message' => \"\$count akun petugas berhasil disinkronkan ke MySQL.\", 'saved' => $count]);
+    } catch (Exception $e) {
+        http_response_code(500);
+        echo json_encode(['success' => false, 'error' => 'Gagal menyimpan akun user ke database: ' . $e->getMessage()]);
     }
 }
 ?>`;

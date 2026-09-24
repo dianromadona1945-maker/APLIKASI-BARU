@@ -747,6 +747,19 @@ export function getUsers(): User[] {
   const validUsers = rawUsers.filter((u) => u && (u.role === 'admin' || u.role === 'petugas_tu'));
   let modified = validUsers.length !== rawUsers.length;
 
+  // Merge any missing initial default users (e.g. tu123, mila, tika1) into validUsers
+  INITIAL_USERS.forEach((initU) => {
+    const exists = validUsers.some(
+      (u) =>
+        u.id === initU.id ||
+        u.username.toLowerCase().replace(/^@/, '') === initU.username.toLowerCase().replace(/^@/, '')
+    );
+    if (!exists) {
+      validUsers.push({ ...initU });
+      modified = true;
+    }
+  });
+
   const updatedUsers = validUsers.map((u) => {
     const item = { ...u };
     // Only migrate the original default accounts by exact ID, NEVER mutate newly created users
@@ -913,19 +926,19 @@ export function loginUser(
   passwordInput: string
 ): { success: boolean; user?: User; error?: string } {
   const users = getUsers();
-  const cleanUsername = usernameInput.trim().toLowerCase();
+  const cleanUsername = usernameInput.trim().toLowerCase().replace(/^@/, '');
   const cleanPassword = passwordInput.trim();
 
   const user = users.find(
     (u) =>
-      u.username.toLowerCase() === cleanUsername ||
-      (u.email && u.email.toLowerCase() === cleanUsername)
+      u.username.toLowerCase().replace(/^@/, '') === cleanUsername ||
+      (u.email && u.email.toLowerCase().trim() === cleanUsername)
   );
 
   if (!user) {
     return {
       success: false,
-      error: `Username atau email "${usernameInput}" tidak terdaftar dalam sistem. Pastikan ejaan tepat atau pilih dari daftar akun terdaftar.`,
+      error: `Username atau email "${usernameInput}" tidak terdaftar dalam sistem. Pastikan ejaan tepat atau hubungi Administrator.`,
     };
   }
 
