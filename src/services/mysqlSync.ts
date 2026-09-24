@@ -1,4 +1,4 @@
-import { Student, StudentDocument, AuditLog, User } from '../types';
+import { Student, StudentDocument, AuditLog, User, UserRole } from '../types';
 import {
   smartMergeRemoteData,
   getStudents,

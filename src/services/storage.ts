@@ -1,4 +1,4 @@
-import { Student, StudentDocument, AuditLog, User, CompletenessStats, DocumentType, VerificationStatus, InstitutionLevel } from '../types';
+import { Student, StudentDocument, AuditLog, User, UserRole, CompletenessStats, DocumentType, VerificationStatus, InstitutionLevel } from '../types';
 import { INITIAL_USERS, DEFAULT_ACADEMIC_YEARS } from '../data/constants';
 import { generateSampleDocumentDataUrl } from '../utils/documentGenerator';
 
