@@ -769,7 +769,8 @@ export async function deleteUserFromHosting(userId: string, username?: string): 
 
 export async function loginWithHosting(
   usernameInput: string,
-  passwordInput: string
+  passwordInput: string,
+  requiredRole?: UserRole
 ): Promise<{ success: boolean; user?: User; error?: string }> {
   const config = getSyncConfig();
   if (!config.apiUrl) {
@@ -778,6 +779,18 @@ export async function loginWithHosting(
 
   const cleanUsername = usernameInput.trim().replace(/^@/, '');
   const cleanPassword = passwordInput.trim();
+
+  // Periksa apakah akun sudah dihapus oleh admin
+  const deletedList = getDeletedUserIds();
+  if (
+    deletedList.includes(cleanUsername.toLowerCase()) ||
+    deletedList.includes('@' + cleanUsername.toLowerCase())
+  ) {
+    return {
+      success: false,
+      error: `Akun "@${cleanUsername}" telah dihapus oleh Administrator dan tidak lagi dapat digunakan untuk masuk.`,
+    };
+  }
 
   try {
     const url = new URL(config.apiUrl);
@@ -792,6 +805,7 @@ export async function loginWithHosting(
         key: config.syncKey.trim(),
         username: cleanUsername,
         password: cleanPassword,
+        role: requiredRole,
       }),
     });
 
@@ -807,6 +821,32 @@ export async function loginWithHosting(
 
     const data = await response.json();
     if (data.success && data.user) {
+      // Pastikan akun ini bukan akun yang telah dihapus
+      const isDel =
+        deletedList.includes((data.user.id || '').toLowerCase()) ||
+        deletedList.includes((data.user.username || '').toLowerCase().replace(/^@/, ''));
+      if (isDel) {
+        return {
+          success: false,
+          error: `Akun "@${data.user.username}" telah dihapus oleh Administrator dan tidak lagi memiliki akses.`,
+        };
+      }
+
+      // Pastikan role akun cocok dengan yang dipilih
+      if (requiredRole && data.user.role !== requiredRole) {
+        if (requiredRole === 'admin') {
+          return {
+            success: false,
+            error: `Akun "@${data.user.username}" terdaftar sebagai Petugas Tata Usaha (TU), bukan Administrator. Silakan klik tab "Petugas Tata Usaha (TU)" di atas untuk masuk.`,
+          };
+        } else {
+          return {
+            success: false,
+            error: `Akun "@${data.user.username}" terdaftar sebagai Administrator, bukan Petugas TU. Silakan klik tab "Administrator" di atas untuk masuk.`,
+          };
+        }
+      }
+
       return { success: true, user: data.user };
     } else {
       return { success: false, error: data.error || 'Autentikasi akun di database cloud gagal.' };
@@ -2214,6 +2254,7 @@ function handleDeleteStudent($pdo, $body) {
 function handleLogin($pdo, $body) {
     $rawUsername = trim($body['username'] ?? '');
     $password = trim($body['password'] ?? '');
+    $role = trim($body['role'] ?? '');
     $cleanUsername = strtolower(ltrim($rawUsername, '@'));
 
     if (empty($cleanUsername) || empty($password)) {
@@ -2235,6 +2276,17 @@ function handleLogin($pdo, $body) {
             echo json_encode([
                 'success' => false,
                 'error' => 'Username atau email "' . htmlspecialchars($rawUsername) . '" tidak terdaftar dalam sistem.',
+            ]);
+            return;
+        }
+
+        if (!empty($role) && strtolower($row['role']) !== strtolower($role)) {
+            $msg = ($role === 'admin')
+                ? 'Akun "@' . htmlspecialchars($row['username']) . '" terdaftar sebagai Petugas Tata Usaha (TU), bukan Administrator. Silakan klik tab "Petugas Tata Usaha (TU)" di atas untuk masuk.'
+                : 'Akun "@' . htmlspecialchars($row['username']) . '" terdaftar sebagai Administrator, bukan Petugas TU. Silakan klik tab "Administrator" di atas untuk masuk.';
+            echo json_encode([
+                'success' => false,
+                'error' => $msg,
             ]);
             return;
         }

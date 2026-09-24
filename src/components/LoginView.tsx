@@ -14,7 +14,7 @@ import {
   Clock,
 } from 'lucide-react';
 import { User, UserRole } from '../types';
-import { loginUser, saveUser } from '../services/storage';
+import { loginUser, saveUser, getDeletedUserIds } from '../services/storage';
 import { loginWithHosting, pullUsersFromHosting } from '../services/mysqlSync';
 
 interface LoginViewProps {
@@ -36,7 +36,15 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, noticeMess
     pullUsersFromHosting()
       .then((remoteUsers) => {
         if (remoteUsers && Array.isArray(remoteUsers) && remoteUsers.length > 0) {
-          remoteUsers.forEach((ru) => saveUser(ru));
+          const deletedList = getDeletedUserIds();
+          remoteUsers.forEach((ru) => {
+            const isDel =
+              deletedList.includes((ru.id || '').toLowerCase()) ||
+              deletedList.includes((ru.username || '').toLowerCase().replace(/^@/, ''));
+            if (!isDel) {
+              saveUser(ru, false);
+            }
+          });
         }
       })
       .catch(() => {});
@@ -60,20 +68,51 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, noticeMess
     setIsLoading(true);
     setErrorMessage(null);
 
-    // 1. Coba login lokal terlebih dahulu (cepat dan mendukung akses offline)
-    const localResult = loginUser(cleanUsername, cleanPassword);
+    // 1. Cek apakah akun ini pernah dihapus oleh Administrator
+    const deletedList = getDeletedUserIds();
+    if (
+      deletedList.includes(cleanUsername.toLowerCase()) ||
+      deletedList.includes('@' + cleanUsername.toLowerCase())
+    ) {
+      setIsLoading(false);
+      setErrorMessage(`Akun "@${cleanUsername}" telah dihapus oleh Administrator dan tidak lagi memiliki hak akses.`);
+      return;
+    }
+
+    // 2. Coba login lokal terlebih dahulu dengan validasi peran yang dipilih
+    const localResult = loginUser(cleanUsername, cleanPassword, selectedRole);
     if (localResult.success && localResult.user) {
       setIsLoading(false);
       onLoginSuccess(localResult.user);
       return;
     }
 
-    // 2. Jika akun belum tersimpan di browser ini, lakukan verifikasi langsung ke server MySQL hosting
+    // Jika pesan error karena akun dihapus atau peran tidak sesuai (role mismatch), jangan cek remote
+    if (
+      localResult.error &&
+      (localResult.error.includes('Silakan klik tab') || localResult.error.includes('telah dihapus'))
+    ) {
+      setIsLoading(false);
+      setErrorMessage(localResult.error);
+      return;
+    }
+
+    // 3. Jika belum terdaftar lokal, verifikasi langsung ke server MySQL hosting
     try {
-      const remoteLogin = await loginWithHosting(cleanUsername, cleanPassword);
+      const remoteLogin = await loginWithHosting(cleanUsername, cleanPassword, selectedRole);
       if (remoteLogin.success && remoteLogin.user) {
-        saveUser(remoteLogin.user);
-        const retryResult = loginUser(cleanUsername, cleanPassword);
+        const isDel =
+          deletedList.includes((remoteLogin.user.id || '').toLowerCase()) ||
+          deletedList.includes((remoteLogin.user.username || '').toLowerCase().replace(/^@/, ''));
+        if (isDel) {
+          setIsLoading(false);
+          setErrorMessage(`Akun "@${remoteLogin.user.username}" telah dihapus oleh Administrator.`);
+          return;
+        }
+
+        // Simpan akun ke lokal
+        saveUser(remoteLogin.user, false);
+        const retryResult = loginUser(cleanUsername, cleanPassword, selectedRole);
         setIsLoading(false);
         if (retryResult.success && retryResult.user) {
           onLoginSuccess(retryResult.user);

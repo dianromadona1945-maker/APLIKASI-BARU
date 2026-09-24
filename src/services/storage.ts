@@ -852,9 +852,11 @@ export function getUsers(): User[] {
   return updatedUsers;
 }
 
-export function saveUser(user: User): void {
-  // If re-creating or updating an account, unblock from deleted tombstone
-  removeDeletedUserId(user.id, user.username);
+export function saveUser(user: User, isExplicitCreateOrUpdate: boolean = false): void {
+  // Only unblock from deleted tombstone if explicitly created or updated by administrator
+  if (isExplicitCreateOrUpdate) {
+    removeDeletedUserId(user.id, user.username);
+  }
 
   const users = getUsers();
   const idx = users.findIndex((u) => u.id === user.id);
@@ -983,23 +985,55 @@ export function logoutUser(): void {
 
 export function loginUser(
   usernameInput: string,
-  passwordInput: string
+  passwordInput: string,
+  requiredRole?: UserRole
 ): { success: boolean; user?: User; error?: string } {
-  const users = getUsers();
   const cleanUsername = usernameInput.trim().toLowerCase().replace(/^@/, '');
   const cleanPassword = passwordInput.trim();
+  const deletedList = getDeletedUserIds();
 
+  // 1. Periksa apakah akun sudah dihapus oleh Administrator
+  if (
+    deletedList.includes(cleanUsername) ||
+    deletedList.includes('@' + cleanUsername)
+  ) {
+    return {
+      success: false,
+      error: `Akun "@${cleanUsername}" telah dihapus oleh Administrator dan tidak lagi memiliki hak akses ke sistem.`,
+    };
+  }
+
+  const users = getUsers();
   const user = users.find(
     (u) =>
       u.username.toLowerCase().replace(/^@/, '') === cleanUsername ||
       (u.email && u.email.toLowerCase().trim() === cleanUsername)
   );
 
-  if (!user) {
+  if (
+    !user ||
+    deletedList.includes((user.id || '').toLowerCase()) ||
+    deletedList.includes((user.username || '').toLowerCase().replace(/^@/, ''))
+  ) {
     return {
       success: false,
       error: `Username atau email "${usernameInput}" tidak terdaftar dalam sistem. Pastikan ejaan tepat atau hubungi Administrator.`,
     };
+  }
+
+  // 2. Validasi kesesuaian peran (Role Check)
+  if (requiredRole && user.role !== requiredRole) {
+    if (requiredRole === 'admin') {
+      return {
+        success: false,
+        error: `Akun "@${user.username}" terdaftar sebagai Petugas Tata Usaha (TU), bukan Administrator. Silakan klik tab "Petugas Tata Usaha (TU)" di atas untuk masuk.`,
+      };
+    } else {
+      return {
+        success: false,
+        error: `Akun "@${user.username}" terdaftar sebagai Administrator, bukan Petugas TU. Silakan klik tab "Administrator" di atas untuk masuk.`,
+      };
+    }
   }
 
   if (user.active === false) {
@@ -1009,7 +1043,7 @@ export function loginUser(
     };
   }
 
-  // Check password trimmed against user.password
+  // 3. Periksa kata sandi
   const expectedPass = (user.password || (user.role === 'admin' ? 'admin' : 'tu123')).trim();
   const isPasswordValid = cleanPassword === expectedPass;
 
@@ -1035,7 +1069,7 @@ export function loginUser(
     ' WIB';
 
   user.lastLogin = nowFormatted;
-  saveUser(user);
+  saveUser(user, false);
   setCurrentUser(user);
   setAuthenticated(true);
 

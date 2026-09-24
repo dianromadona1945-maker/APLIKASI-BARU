@@ -651,7 +651,7 @@ export default function App() {
 
   const handleSaveUser = async (user: User) => {
     const isExisting = users.some((u) => u.id === user.id);
-    saveUser(user);
+    saveUser(user, true);
     if (currentUser.id === user.id) {
       setCurrentUser(user);
       setCurrentUserState(user);
