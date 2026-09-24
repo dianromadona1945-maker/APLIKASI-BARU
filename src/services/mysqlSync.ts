@@ -4,6 +4,7 @@ import {
   getStudents,
   getDocuments,
   getAcademicYears,
+  getUsers,
   getDeletedStudentIds,
   getDeletedDocIds,
   markStudentsAsSynced,
@@ -692,11 +693,76 @@ export async function executeTwoWaySync(): Promise<{
   }
 }
 
+export async function saveUserToHosting(user: User): Promise<{ success: boolean; message: string }> {
+  const config = getSyncConfig();
+  if (!config.apiUrl) {
+    return { success: false, message: 'URL API Rumahweb belum dikonfigurasi.' };
+  }
+
+  try {
+    const url = new URL(config.apiUrl);
+    url.searchParams.set('action', 'save_user');
+    const response = await fetch(url.toString(), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Sync-Key': config.syncKey.trim(),
+      },
+      body: JSON.stringify({
+        key: config.syncKey.trim(),
+        user,
+      }),
+    });
+
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    return {
+      success: !!data.success,
+      message: data.message || `Akun petugas ${user.name} berhasil disimpan di cloud.`,
+    };
+  } catch (err: any) {
+    return { success: false, message: `Gagal menyimpan user ke cloud: ${err.message || String(err)}` };
+  }
+}
+
+export async function deleteUserFromHosting(userId: string): Promise<{ success: boolean; message: string }> {
+  const config = getSyncConfig();
+  if (!config.apiUrl) {
+    return { success: false, message: 'URL API Rumahweb belum dikonfigurasi.' };
+  }
+
+  try {
+    const url = new URL(config.apiUrl);
+    url.searchParams.set('action', 'delete_user');
+    const response = await fetch(url.toString(), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Sync-Key': config.syncKey.trim(),
+      },
+      body: JSON.stringify({
+        key: config.syncKey.trim(),
+        userId,
+      }),
+    });
+
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    return {
+      success: !!data.success,
+      message: data.message || `Akun petugas berhasil dihapus dari cloud.`,
+    };
+  } catch (err: any) {
+    return { success: false, message: `Gagal menghapus user dari cloud: ${err.message || String(err)}` };
+  }
+}
+
 export async function pushAllDataToHosting(payload: {
   students: Student[];
   documents: StudentDocument[];
   academicYears: string[];
   logs?: AuditLog[];
+  users?: User[];
   mirror?: boolean;
   clear_all?: boolean;
 }): Promise<{ success: boolean; message: string }> {
@@ -724,6 +790,7 @@ export async function pushAllDataToHosting(payload: {
         documents: payload.documents,
         academicYears: payload.academicYears,
         logs: payload.logs || [],
+        users: payload.users || getUsers(),
         deletedIds: payload.mirror === true ? getDeletedStudentIds() : [],
         deletedDocIds: payload.mirror === true ? getDeletedDocIds() : [],
         clear_all: payload.clear_all === true,
@@ -1085,6 +1152,14 @@ switch ($action) {
         handleDeleteStudent($pdo, $body);
         break;
 
+    case 'save_user':
+        handleSaveUser($pdo, $body);
+        break;
+
+    case 'delete_user':
+        handleDeleteUser($pdo, $body);
+        break;
+
     default:
         echo json_encode([
             'success' => false,
@@ -1159,6 +1234,21 @@ function initDatabaseTables($pdo) {
         \`user_role\` VARCHAR(50) DEFAULT NULL,
         \`action\` VARCHAR(255) DEFAULT NULL,
         \`details\` TEXT DEFAULT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;");
+
+    // Tabel Akun Petugas Sekolah
+    $pdo->exec("CREATE TABLE IF NOT EXISTS \`arsip_users\` (
+        \`id\` VARCHAR(100) NOT NULL PRIMARY KEY,
+        \`username\` VARCHAR(100) NOT NULL UNIQUE,
+        \`name\` VARCHAR(255) NOT NULL,
+        \`role\` VARCHAR(50) NOT NULL,
+        \`email\` VARCHAR(255) DEFAULT NULL,
+        \`nip\` VARCHAR(50) DEFAULT NULL,
+        \`password\` VARCHAR(255) NOT NULL,
+        \`active\` TINYINT(1) DEFAULT 1,
+        \`last_login\` VARCHAR(100) DEFAULT NULL,
+        \`raw_json\` LONGTEXT DEFAULT NULL,
+        \`updated_at\` VARCHAR(50) DEFAULT NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;");
 }
 
@@ -1656,14 +1746,52 @@ function handlePushAll($pdo, $body) {
             }
         }
 
+        // Upsert Akun Petugas / Pengguna
+        $users = isset($body['users']) && is_array($body['users']) ? $body['users'] : [];
+        if (!empty($users)) {
+            $stmtUser = $pdo->prepare("INSERT INTO \`arsip_users\` (
+                \`id\`, \`username\`, \`name\`, \`role\`, \`email\`, \`nip\`, \`password\`, \`active\`, \`last_login\`, \`raw_json\`, \`updated_at\`
+            ) VALUES (
+                :id, :username, :name, :role, :email, :nip, :password, :active, :last_login, :raw_json, :updated_at
+            ) ON DUPLICATE KEY UPDATE
+                \`username\` = VALUES(\`username\`),
+                \`name\` = VALUES(\`name\`),
+                \`role\` = VALUES(\`role\`),
+                \`email\` = VALUES(\`email\`),
+                \`nip\` = VALUES(\`nip\`),
+                \`password\` = VALUES(\`password\`),
+                \`active\` = VALUES(\`active\`),
+                \`last_login\` = VALUES(\`last_login\`),
+                \`raw_json\` = VALUES(\`raw_json\`),
+                \`updated_at\` = VALUES(\`updated_at\`)");
+
+            foreach ($users as $u) {
+                if (empty($u['id']) || empty($u['username'])) continue;
+                $stmtUser->execute([
+                    ':id' => $u['id'],
+                    ':username' => $u['username'],
+                    ':name' => $u['name'] ?? '',
+                    ':role' => $u['role'] ?? 'petugas_tu',
+                    ':email' => $u['email'] ?? '',
+                    ':nip' => $u['nip'] ?? '',
+                    ':password' => $u['password'] ?? ($u['role'] === 'admin' ? 'admin' : 'tu123'),
+                    ':active' => ($u['active'] ?? true) ? 1 : 0,
+                    ':last_login' => $u['lastLogin'] ?? '',
+                    ':raw_json' => json_encode($u),
+                    ':updated_at' => date('c'),
+                ]);
+            }
+        }
+
         $pdo->commit();
 
         echo json_encode([
             'success' => true,
-            'message' => 'Berhasil menyimpan ' . count($students) . ' siswa dan ' . count($documents) . ' dokumen ke MySQL Rumahweb.',
+            'message' => 'Berhasil menyimpan ' . count($students) . ' siswa, ' . count($documents) . ' dokumen, dan ' . count($users) . ' akun petugas ke MySQL Rumahweb.',
             'saved' => [
                 'students' => count($students),
                 'documents' => count($documents),
+                'users' => count($users),
             ]
         ]);
     } catch (Exception $e) {
@@ -1753,12 +1881,40 @@ function handlePullAll($pdo) {
     $stmt3 = $pdo->query("SELECT \`year_name\` FROM \`arsip_academic_years\` ORDER BY \`id\` ASC");
     $years = $stmt3->fetchAll(PDO::FETCH_COLUMN);
 
+    // Ambil akun petugas
+    $users = [];
+    try {
+        $stmtUsers = $pdo->query("SELECT * FROM \`arsip_users\`");
+        $rawUsers = $stmtUsers->fetchAll();
+        foreach ($rawUsers as $u) {
+            if (!empty($u['raw_json'])) {
+                $decoded = json_decode($u['raw_json'], true);
+                if (is_array($decoded)) {
+                    $users[] = $decoded;
+                    continue;
+                }
+            }
+            $users[] = [
+                'id' => $u['id'],
+                'username' => $u['username'],
+                'name' => $u['name'],
+                'role' => $u['role'],
+                'email' => $u['email'] ?? '',
+                'nip' => $u['nip'] ?? '',
+                'password' => $u['password'],
+                'active' => (bool)($u['active'] ?? 1),
+                'lastLogin' => $u['last_login'] ?? '',
+            ];
+        }
+    } catch (Exception $e) {}
+
     echo json_encode([
         'success' => true,
         'data' => [
             'students' => $students,
             'documents' => $documents,
             'academicYears' => !empty($years) ? $years : [],
+            'users' => $users,
         ]
     ]);
 }
@@ -1773,17 +1929,94 @@ function handleCheckSync($pdo) {
     $stmt3 = $pdo->query("SELECT COUNT(*) AS total FROM \`arsip_academic_years\`");
     $totalYears = (int)$stmt3->fetchColumn();
 
+    $stmt4 = $pdo->query("SELECT COUNT(*) AS total FROM \`arsip_users\`");
+    $totalUsers = (int)$stmt4->fetchColumn();
+
     echo json_encode([
         'success' => true,
         'counts' => [
             'students' => (int)($sInfo['total'] ?? 0),
             'documents' => (int)($dInfo['total'] ?? 0),
-            'academicYears' => $totalYears
+            'academicYears' => $totalYears,
+            'users' => $totalUsers,
         ],
         'lastStudentUpdate' => $sInfo['last_updated'] ?? '',
         'lastDocUpdate' => $dInfo['last_doc'] ?? '',
         'server_time' => date('Y-m-d H:i:s'),
     ]);
+}
+
+function handleSaveUser($pdo, $body) {
+    $user = isset($body['user']) && is_array($body['user']) ? $body['user'] : null;
+    if (!$user || empty($user['id']) || empty($user['username'])) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'error' => 'Data user tidak valid atau ID/username kosong']);
+        return;
+    }
+
+    try {
+        $stmt = $pdo->prepare("INSERT INTO \`arsip_users\` (
+            \`id\`, \`username\`, \`name\`, \`role\`, \`email\`, \`nip\`, \`password\`, \`active\`, \`last_login\`, \`raw_json\`, \`updated_at\`
+        ) VALUES (
+            :id, :username, :name, :role, :email, :nip, :password, :active, :last_login, :raw_json, :updated_at
+        ) ON DUPLICATE KEY UPDATE
+            \`username\` = VALUES(\`username\`),
+            \`name\` = VALUES(\`name\`),
+            \`role\` = VALUES(\`role\`),
+            \`email\` = VALUES(\`email\`),
+            \`nip\` = VALUES(\`nip\`),
+            \`password\` = VALUES(\`password\`),
+            \`active\` = VALUES(\`active\`),
+            \`last_login\` = VALUES(\`last_login\`),
+            \`raw_json\` = VALUES(\`raw_json\`),
+            \`updated_at\` = VALUES(\`updated_at\`)");
+
+        $stmt->execute([
+            ':id' => $user['id'],
+            ':username' => $user['username'],
+            ':name' => $user['name'] ?? '',
+            ':role' => $user['role'] ?? 'petugas_tu',
+            ':email' => $user['email'] ?? '',
+            ':nip' => $user['nip'] ?? '',
+            ':password' => $user['password'] ?? ($user['role'] === 'admin' ? 'admin' : 'tu123'),
+            ':active' => ($user['active'] ?? true) ? 1 : 0,
+            ':last_login' => $user['lastLogin'] ?? '',
+            ':raw_json' => json_encode($user),
+            ':updated_at' => date('c'),
+        ]);
+
+        echo json_encode([
+            'success' => true,
+            'message' => 'Akun petugas ' . ($user['name'] ?? '') . ' berhasil disimpan di MySQL cloud.',
+            'userId' => $user['id']
+        ]);
+    } catch (Exception $e) {
+        http_response_code(500);
+        echo json_encode(['success' => false, 'error' => 'Gagal menyimpan user: ' . $e->getMessage()]);
+    }
+}
+
+function handleDeleteUser($pdo, $body) {
+    $userId = $body['userId'] ?? '';
+    if (empty($userId)) {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'error' => 'ID user tidak boleh kosong']);
+        return;
+    }
+    if ($userId === 'usr-admin-01') {
+        http_response_code(403);
+        echo json_encode(['success' => false, 'error' => 'Akun admin utama tidak boleh dihapus']);
+        return;
+    }
+
+    try {
+        $stmt = $pdo->prepare("DELETE FROM \`arsip_users\` WHERE \`id\` = :id");
+        $stmt->execute([':id' => $userId]);
+        echo json_encode(['success' => true, 'message' => 'Akun petugas berhasil dihapus dari cloud']);
+    } catch (Exception $e) {
+        http_response_code(500);
+        echo json_encode(['success' => false, 'error' => 'Gagal menghapus user: ' . $e->getMessage()]);
+    }
 }
 
 function handleDeleteStudent($pdo, $body) {

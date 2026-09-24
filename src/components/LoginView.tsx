@@ -46,7 +46,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, noticeMess
     setErrorMessage(null);
 
     setTimeout(() => {
-      const result = loginUser(username, password);
+      const result = loginUser(username.trim(), password.trim());
       setIsLoading(false);
 
       if (result.success && result.user) {
@@ -73,7 +73,9 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, noticeMess
             <span className="font-extrabold text-white text-base tracking-tight block">
               Sistem Arsip Dokumen Siswa
             </span>
-            <span className="text-[11px] text-slate-400 font-medium">SD, SMP &amp; SMK Al-Tafaqquh Fiddin • Portal Masuk Petugas</span>
+            <span className="text-[11px] text-slate-400 font-medium">
+              SD, SMP &amp; SMK Al-Tafaqquh Fiddin • Portal Masuk Petugas
+            </span>
           </div>
         </div>
 
@@ -110,10 +112,10 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, noticeMess
               <div className="p-4 rounded-2xl bg-slate-800/60 border border-slate-700/60 shadow-lg space-y-2.5">
                 <div className="flex items-center gap-2 text-xs font-bold text-slate-200">
                   <Lock className="w-4 h-4 text-emerald-400" />
-                  <span>Kerahasiaan & Akses Terbatas</span>
+                  <span>Kerahasiaan &amp; Akses Terbatas</span>
                 </div>
                 <p className="text-[11px] text-slate-400 leading-relaxed">
-                  Sistem ini hanya diperuntukkan bagi Administrator dan Petugas Tata Usaha resmi SD, SMP & SMK Al-Tafaqquh Fiddin. Seluruh aktivitas akses dan pengelolaan dokumen siswa tercatat dalam sistem audit keamanan.
+                  Sistem ini hanya diperuntukkan bagi Administrator dan Petugas Tata Usaha resmi SD, SMP &amp; SMK Al-Tafaqquh Fiddin. Seluruh aktivitas akses dan pengelolaan dokumen siswa tercatat dalam sistem audit keamanan.
                 </p>
               </div>
             </div>
@@ -130,7 +132,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, noticeMess
               </div>
               <div className="flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                <span>Cadangan Data JSON & ZIP</span>
+                <span>Cadangan Data JSON &amp; ZIP</span>
               </div>
               <div className="flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
@@ -139,7 +141,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, noticeMess
             </div>
           </div>
 
-          {/* Right Column: Interactive Login Form */}
+          {/* Right Column: Standard Interactive Login Form */}
           <div className="lg:col-span-7 bg-white rounded-3xl p-6 sm:p-8 shadow-2xl border border-slate-100 flex flex-col justify-center">
             <div>
               {/* Form Title */}
@@ -163,7 +165,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, noticeMess
                   type="button"
                   id="tab-role-admin"
                   onClick={() => handleRoleSelect('admin')}
-                  className={`py-2.5 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 ${
+                  className={`py-2.5 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer ${
                     selectedRole === 'admin'
                       ? 'bg-white text-blue-700 shadow-xs border border-slate-200/80 font-extrabold'
                       : 'text-slate-600 hover:text-slate-900'
@@ -177,7 +179,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, noticeMess
                   type="button"
                   id="tab-role-tu"
                   onClick={() => handleRoleSelect('petugas_tu')}
-                  className={`py-2.5 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 ${
+                  className={`py-2.5 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer ${
                     selectedRole === 'petugas_tu'
                       ? 'bg-white text-blue-700 shadow-xs border border-slate-200/80 font-extrabold'
                       : 'text-slate-600 hover:text-slate-900'
@@ -223,7 +225,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, noticeMess
                       value={username}
                       onChange={(e) => setUsername(e.target.value)}
                       placeholder="Masukkan username Anda..."
-                      className="w-full pl-10 pr-4 py-2.5 text-xs sm:text-sm bg-slate-50 focus:bg-white rounded-xl border border-slate-200 focus:outline-hidden focus:ring-2 focus:ring-blue-500 font-medium transition"
+                      className="w-full pl-10 pr-4 py-2.5 text-xs sm:text-sm bg-slate-50 focus:bg-white rounded-xl border border-slate-200 focus:outline-hidden focus:ring-2 focus:ring-blue-500 font-medium transition text-slate-900"
                     />
                   </div>
                 </div>
@@ -242,7 +244,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, noticeMess
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       placeholder="Masukkan kata sandi..."
-                      className="w-full pl-10 pr-10 py-2.5 text-xs sm:text-sm bg-slate-50 focus:bg-white rounded-xl border border-slate-200 focus:outline-hidden focus:ring-2 focus:ring-blue-500 font-medium transition font-mono"
+                      className="w-full pl-10 pr-10 py-2.5 text-xs sm:text-sm bg-slate-50 focus:bg-white rounded-xl border border-slate-200 focus:outline-hidden focus:ring-2 focus:ring-blue-500 font-medium transition font-mono text-slate-900"
                     />
                     <button
                       type="button"
@@ -284,7 +286,9 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, noticeMess
                       </span>
                     ) : (
                       <>
-                        <span>Masuk Sebagai {selectedRole === 'admin' ? 'Administrator' : 'Petugas TU'}</span>
+                        <span>
+                          Masuk Sebagai {selectedRole === 'admin' ? 'Administrator' : 'Petugas TU'}
+                        </span>
                         <ArrowRight className="w-4 h-4" />
                       </>
                     )}

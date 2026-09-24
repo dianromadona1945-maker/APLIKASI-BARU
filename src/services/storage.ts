@@ -742,30 +742,38 @@ export function getUsers(): User[] {
   initializeStorage();
   const raw = localStorage.getItem(STORAGE_KEYS.USERS);
   const rawUsers: User[] = raw ? JSON.parse(raw) : INITIAL_USERS;
-  
+
   // Only retain admin and petugas_tu
-  const validUsers = rawUsers.filter((u) => u.role === 'admin' || u.role === 'petugas_tu');
+  const validUsers = rawUsers.filter((u) => u && (u.role === 'admin' || u.role === 'petugas_tu'));
   let modified = validUsers.length !== rawUsers.length;
 
   const updatedUsers = validUsers.map((u) => {
-    let item = { ...u };
-    // Migrate old placeholder names if present
-    if (item.role === 'admin' && (item.name.includes('Bambang') || item.nip === '198402152009031002')) {
-      item.name = 'Dian Romadona, S.Pd.';
-      item.nip = '';
-      item.email = 'dian.romadona@sekolah.sch.id';
-      modified = true;
+    const item = { ...u };
+    // Only migrate the original default accounts by exact ID, NEVER mutate newly created users
+    if (item.id === 'usr-admin-01') {
+      if (item.name.includes('Bambang') || item.nip === '198402152009031002') {
+        item.name = 'Dian Romadona, S.Pd.';
+        item.nip = '';
+        item.email = 'dian.romadona@sekolah.sch.id';
+        modified = true;
+      }
     }
-    if (item.role === 'petugas_tu' && (item.name.includes('Dewi') || item.nip === '199105182015022001')) {
-      item.name = 'Mamat Miftahurrahmat, S.Pd.';
-      item.nip = '';
-      item.email = 'mamat.miftahurrahmat@sekolah.sch.id';
-      modified = true;
+    if (item.id === 'usr-tu-01') {
+      if (item.name.includes('Dewi') || item.nip === '199105182015022001') {
+        item.name = 'Mamat Miftahurrahmat, S.Pd.';
+        item.nip = '';
+        item.email = 'mamat.miftahurrahmat@sekolah.sch.id';
+        modified = true;
+      }
     }
     if (!item.password) {
       modified = true;
       const defaultPass = item.role === 'admin' ? 'admin' : 'tu123';
       item.password = defaultPass;
+    }
+    if (item.active === undefined) {
+      item.active = true;
+      modified = true;
     }
     return item;
   });
@@ -781,9 +789,9 @@ export function saveUser(user: User): void {
   const users = getUsers();
   const idx = users.findIndex((u) => u.id === user.id);
   if (idx !== -1) {
-    users[idx] = user;
+    users[idx] = { ...user };
   } else {
-    users.push(user);
+    users.push({ ...user });
   }
   localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(users));
 
@@ -794,18 +802,48 @@ export function saveUser(user: User): void {
   }
 }
 
+export function deleteUser(userId: string): { success: boolean; message: string } {
+  const users = getUsers();
+  const target = users.find((u) => u.id === userId);
+  if (!target) {
+    return { success: false, message: 'Akun petugas tidak ditemukan.' };
+  }
+  if (target.id === 'usr-admin-01' || target.username.toLowerCase() === 'admin') {
+    return { success: false, message: 'Akun Administrator utama tidak dapat dihapus.' };
+  }
+  const current = getCurrentUser();
+  if (current.id === userId) {
+    return { success: false, message: 'Anda tidak dapat menghapus akun yang sedang Anda gunakan saat ini.' };
+  }
+
+  const updated = users.filter((u) => u.id !== userId);
+  localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updated));
+  return { success: true, message: `Akun petugas ${target.name} (@${target.username}) berhasil dihapus.` };
+}
+
 export function getCurrentUser(): User {
   initializeStorage();
+  // Check sessionStorage first for current browser tab session
+  if (typeof window !== 'undefined') {
+    const sessionRaw = sessionStorage.getItem(STORAGE_KEYS.CURRENT_USER);
+    if (sessionRaw) {
+      try {
+        const u: User = JSON.parse(sessionRaw);
+        if (u && u.id) return u;
+      } catch {}
+    }
+  }
+
   const raw = localStorage.getItem(STORAGE_KEYS.CURRENT_USER);
   if (!raw) return INITIAL_USERS[0];
   try {
     const user: User = JSON.parse(raw);
-    if (user.role === 'admin' && user.name.includes('Bambang')) {
+    if (user.id === 'usr-admin-01' && user.name.includes('Bambang')) {
       const updated: User = { ...user, name: 'Dian Romadona, S.Pd.', nip: '', email: 'dian.romadona@sekolah.sch.id' };
       setCurrentUser(updated);
       return updated;
     }
-    if (user.role === 'petugas_tu' && user.name.includes('Dewi')) {
+    if (user.id === 'usr-tu-01' && user.name.includes('Dewi')) {
       const updated: User = { ...user, name: 'Mamat Miftahurrahmat, S.Pd.', nip: '', email: 'mamat.miftahurrahmat@sekolah.sch.id' };
       setCurrentUser(updated);
       return updated;
@@ -817,18 +855,57 @@ export function getCurrentUser(): User {
 }
 
 export function setCurrentUser(user: User): void {
-  localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(user));
+  if (typeof window !== 'undefined') {
+    try {
+      sessionStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(user));
+    } catch {}
+  }
+  try {
+    localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(user));
+  } catch {}
 }
 
 export function checkIsAuthenticated(): boolean {
   if (typeof window === 'undefined') return false;
   initializeStorage();
+  try {
+    const sessionAuth = sessionStorage.getItem(STORAGE_KEYS.IS_AUTHENTICATED);
+    if (sessionAuth !== null) {
+      return sessionAuth === 'true';
+    }
+  } catch {}
   const authState = localStorage.getItem(STORAGE_KEYS.IS_AUTHENTICATED);
   return authState === 'true';
 }
 
 export function setAuthenticated(status: boolean): void {
-  localStorage.setItem(STORAGE_KEYS.IS_AUTHENTICATED, status ? 'true' : 'false');
+  if (typeof window !== 'undefined') {
+    try {
+      sessionStorage.setItem(STORAGE_KEYS.IS_AUTHENTICATED, status ? 'true' : 'false');
+    } catch {}
+  }
+  try {
+    localStorage.setItem(STORAGE_KEYS.IS_AUTHENTICATED, status ? 'true' : 'false');
+  } catch {}
+}
+
+export function logoutUser(): void {
+  try {
+    const currentUser = getCurrentUser();
+    addAuditLog('LOGOUT', `Pengguna ${currentUser.name} (${currentUser.role}) keluar dari sistem.`);
+  } catch {}
+
+  setAuthenticated(false);
+  if (typeof window !== 'undefined') {
+    try {
+      sessionStorage.removeItem(STORAGE_KEYS.IS_AUTHENTICATED);
+      sessionStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+    } catch {}
+  }
+  try {
+    localStorage.removeItem(STORAGE_KEYS.IS_AUTHENTICATED);
+    localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+  } catch {}
 }
 
 export function loginUser(
@@ -837,20 +914,31 @@ export function loginUser(
 ): { success: boolean; user?: User; error?: string } {
   const users = getUsers();
   const cleanUsername = usernameInput.trim().toLowerCase();
+  const cleanPassword = passwordInput.trim();
+
   const user = users.find(
-    (u) => u.username.toLowerCase() === cleanUsername || u.email.toLowerCase() === cleanUsername
+    (u) =>
+      u.username.toLowerCase() === cleanUsername ||
+      (u.email && u.email.toLowerCase() === cleanUsername)
   );
 
   if (!user) {
     return {
       success: false,
-      error: `Username atau email "${usernameInput}" tidak terdaftar dalam sistem.`,
+      error: `Username atau email "${usernameInput}" tidak terdaftar dalam sistem. Pastikan ejaan tepat atau pilih dari daftar akun terdaftar.`,
     };
   }
 
-  // Check password strictly against user.password
-  const expectedPass = user.password || (user.role === 'admin' ? 'admin' : 'tu123');
-  const isPasswordValid = passwordInput === expectedPass;
+  if (user.active === false) {
+    return {
+      success: false,
+      error: `Akun ${user.name} (@${user.username}) saat ini dinonaktifkan. Silakan hubungi Administrator.`,
+    };
+  }
+
+  // Check password trimmed against user.password
+  const expectedPass = (user.password || (user.role === 'admin' ? 'admin' : 'tu123')).trim();
+  const isPasswordValid = cleanPassword === expectedPass;
 
   if (!isPasswordValid) {
     return {
@@ -909,12 +997,6 @@ export function loginAsRole(role: User['role']): User {
 
   addAuditLog('LOGIN', `Login cepat sebagai ${role.toUpperCase()}: ${user.name}`);
   return user;
-}
-
-export function logoutUser(): void {
-  const currentUser = getCurrentUser();
-  addAuditLog('LOGOUT', `Pengguna ${currentUser.name} (${currentUser.role}) keluar dari sistem.`);
-  setAuthenticated(false);
 }
 
 // Logs operations
@@ -982,7 +1064,7 @@ export function calculateCompleteness(student: Student, documents: StudentDocume
 // Backup & Restore
 export function exportDatabaseBackup(): string {
   const backup = {
-    appName: 'Sistem Arsip Dokumen Siswa SMP & SMK Al-Tafaqquh Fiddin',
+    appName: 'Sistem Arsip Dokumen Siswa SD, SMP & SMK Al-Tafaqquh Fiddin',
     version: '1.2.0',
     exportDate: new Date().toISOString(),
     students: getStudents(),
@@ -1036,6 +1118,7 @@ export function smartMergeRemoteData(data: {
   documents?: StudentDocument[];
   academicYears?: string[];
   logs?: AuditLog[];
+  users?: User[];
 }): SmartMergeResult {
   const localStudents = getStudents();
 
@@ -1330,6 +1413,33 @@ export function smartMergeRemoteData(data: {
     localStorage.setItem(STORAGE_KEYS.LOGS, JSON.stringify(finalLogs));
   }
 
+  // 6. Merge Users
+  if (data.users && Array.isArray(data.users) && data.users.length > 0) {
+    const localUsers = getUsers();
+    const userMap = new Map<string, User>();
+    localUsers.forEach((u) => userMap.set(u.id, u));
+
+    data.users.forEach((rUser) => {
+      if (!rUser || !rUser.id || !rUser.username) return;
+      if (!userMap.has(rUser.id)) {
+        const existingByName = Array.from(userMap.values()).find(
+          (u) => u.username.toLowerCase() === rUser.username.toLowerCase()
+        );
+        if (!existingByName) {
+          userMap.set(rUser.id, rUser);
+        }
+      } else {
+        const lUser = userMap.get(rUser.id)!;
+        userMap.set(rUser.id, {
+          ...rUser,
+          password: lUser.password || rUser.password,
+        });
+      }
+    });
+
+    localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(Array.from(userMap.values())));
+  }
+
   return {
     mergedStudents: finalStudents,
     studentsToPush,
@@ -1348,6 +1458,7 @@ export function applyRemoteSyncedData(data: {
   documents?: StudentDocument[];
   academicYears?: string[];
   logs?: AuditLog[];
+  users?: User[];
 }): void {
   // Use smartMergeRemoteData to guarantee zero data loss!
   smartMergeRemoteData(data);

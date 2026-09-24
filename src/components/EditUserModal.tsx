@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, ShieldCheck, KeyRound, Eye, EyeOff, Save, CheckCircle2, AlertCircle } from 'lucide-react';
 import { User, UserRole } from '../types';
+import { getUsers } from '../services/storage';
 
 interface EditUserModalProps {
   isOpen: boolean;
@@ -52,6 +53,16 @@ export const EditUserModal: React.FC<EditUserModalProps> = ({
 
     if (!cleanUsername) {
       setError('Username tidak boleh kosong.');
+      return;
+    }
+
+    // Check duplicate username against other users
+    const allUsers = getUsers();
+    const isTaken = allUsers.some(
+      (u) => u.id !== user.id && u.username.toLowerCase() === cleanUsername
+    );
+    if (isTaken) {
+      setError(`Username "@${cleanUsername}" sudah digunakan oleh petugas lain.`);
       return;
     }
 

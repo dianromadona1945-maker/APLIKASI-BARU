@@ -475,6 +475,19 @@ export const RumahwebSyncModal: React.FC<RumahwebSyncModalProps> = ({
                 </div>
               )}
 
+              {/* Google Account & Rumahweb Compatibility Callout */}
+              <div className="p-4 rounded-2xl bg-amber-50/80 border border-amber-200/90 flex items-start gap-3">
+                <HelpCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                <div className="text-xs space-y-1">
+                  <p className="font-bold text-amber-950">
+                    Tips Live Sync: Akun Google &amp; Rumahweb
+                  </p>
+                  <p className="text-amber-800 leading-relaxed">
+                    Jika Anda login atau browsing menggunakan akun Google, disarankan menggunakan akun Google dengan alamat email yang berbeda dari email pendaftaran akun cPanel/Rumahweb Anda. Hal ini mencegah bentrok session authentication dan firewall hosting saat menjalankan Live Sync otomatis.
+                  </p>
+                </div>
+              </div>
+
               {/* Action Buttons */}
               <div className="space-y-4">
                 <h4 className="font-extrabold text-sm text-slate-900 flex items-center gap-2">

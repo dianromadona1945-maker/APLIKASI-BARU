@@ -12,6 +12,7 @@ import {
   addAuditLog,
   getUsers,
   saveUser,
+  deleteUser,
   getCurrentUser,
   setCurrentUser,
   checkIsAuthenticated,
@@ -28,6 +29,8 @@ import {
   deleteStudentFromHosting,
   deleteDocumentFromHosting,
   saveDocumentToHosting,
+  saveUserToHosting,
+  deleteUserFromHosting,
   checkServerSyncStatus,
   getIsSyncInProgress,
   getLastKnownSyncTimestamp,
@@ -660,7 +663,18 @@ export default function App() {
         : `Menambahkan akun petugas baru: ${user.name} (${user.role})`
     );
     refreshAllData();
+    saveUserToHosting(user).catch(() => {});
     showToast(isExisting ? `Profil & kata sandi ${user.name} berhasil diperbarui.` : 'Petugas baru berhasil didaftarkan.');
+  };
+
+  const handleDeleteUser = (userId: string) => {
+    const target = users.find((u) => u.id === userId);
+    if (!target) return;
+    deleteUser(userId);
+    addAuditLog('DELETE_USER', `Menghapus akun petugas: ${target.name} (@${target.username})`);
+    deleteUserFromHosting(userId).catch(() => {});
+    refreshAllData();
+    showToast(`Akun petugas ${target.name} berhasil dihapus.`, 'success');
   };
 
   // Document Preview Open
@@ -769,6 +783,7 @@ export default function App() {
                 <UserManagementView
                   users={users}
                   onSaveUser={handleSaveUser}
+                  onDeleteUser={handleDeleteUser}
                   currentUser={currentUser}
                 />
               )}

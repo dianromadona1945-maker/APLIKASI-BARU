@@ -82,7 +82,8 @@ export interface AuditLog {
     | 'DELETE_STUDENT'
     | 'BACKUP_DATA'
     | 'RESTORE_DATA'
-    | 'UPDATE_USER';
+    | 'UPDATE_USER'
+    | 'DELETE_USER';
   userId: string;
   userName: string;
   userRole: UserRole;
