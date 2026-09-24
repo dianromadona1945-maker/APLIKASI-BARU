@@ -403,11 +403,16 @@ export function initializeStorage(): void {
     } catch {}
   }
 
+  // Ensure no persistent session survives in localStorage
+  try {
+    localStorage.removeItem(STORAGE_KEYS.IS_AUTHENTICATED);
+    localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+  } catch {}
+
   const isInitialized = localStorage.getItem(STORAGE_KEYS.INITIALIZED);
   if (!isInitialized) {
     // Seed users
     localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(INITIAL_USERS));
-    localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(INITIAL_USERS[0]));
 
     // CLEAN INITIAL STATE: Start with 0 students and 0 documents!
     // NEVER seed demo students or sample SVG files on new laptops/browsers!
@@ -898,8 +903,13 @@ export function deleteUser(userId: string): { success: boolean; message: string 
 
 export function getCurrentUser(): User {
   initializeStorage();
-  // Check sessionStorage first for current browser tab session
+  // Sesi pengguna aktif HANYA disimpan di sessionStorage (otomatis berakhir saat browser ditutup)
   if (typeof window !== 'undefined') {
+    // Pastikan tidak ada data user login yang tersisa di localStorage
+    try {
+      localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+    } catch {}
+
     const sessionRaw = sessionStorage.getItem(STORAGE_KEYS.CURRENT_USER);
     if (sessionRaw) {
       try {
@@ -909,24 +919,7 @@ export function getCurrentUser(): User {
     }
   }
 
-  const raw = localStorage.getItem(STORAGE_KEYS.CURRENT_USER);
-  if (!raw) return INITIAL_USERS[0];
-  try {
-    const user: User = JSON.parse(raw);
-    if (user.id === 'usr-admin-01' && user.name.includes('Bambang')) {
-      const updated: User = { ...user, name: 'Dian Romadona, S.Pd.', nip: '', email: 'dian.romadona@sekolah.sch.id' };
-      setCurrentUser(updated);
-      return updated;
-    }
-    if (user.id === 'usr-tu-01' && user.name.includes('Dewi')) {
-      const updated: User = { ...user, name: 'Mamat Miftahurrahmat, S.Pd.', nip: '', email: 'mamat.miftahurrahmat@sekolah.sch.id' };
-      setCurrentUser(updated);
-      return updated;
-    }
-    return user;
-  } catch {
-    return INITIAL_USERS[0];
-  }
+  return INITIAL_USERS[0];
 }
 
 export function setCurrentUser(user: User): void {
@@ -934,34 +927,46 @@ export function setCurrentUser(user: User): void {
     try {
       sessionStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(user));
     } catch {}
+    // Pastikan tidak tersimpan di localStorage agar tidak persisten setelah browser ditutup
+    try {
+      localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+    } catch {}
   }
-  try {
-    localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(user));
-  } catch {}
 }
 
 export function checkIsAuthenticated(): boolean {
   if (typeof window === 'undefined') return false;
   initializeStorage();
+
+  // Bersihkan token/flag otentikasi lama di localStorage agar tidak lagi persisten
+  try {
+    localStorage.removeItem(STORAGE_KEYS.IS_AUTHENTICATED);
+    localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+  } catch {}
+
+  // Sesi HANYA diakui dari sessionStorage (hilang begitu browser atau tab ditutup)
   try {
     const sessionAuth = sessionStorage.getItem(STORAGE_KEYS.IS_AUTHENTICATED);
-    if (sessionAuth !== null) {
-      return sessionAuth === 'true';
-    }
-  } catch {}
-  const authState = localStorage.getItem(STORAGE_KEYS.IS_AUTHENTICATED);
-  return authState === 'true';
+    return sessionAuth === 'true';
+  } catch {
+    return false;
+  }
 }
 
 export function setAuthenticated(status: boolean): void {
   if (typeof window !== 'undefined') {
     try {
-      sessionStorage.setItem(STORAGE_KEYS.IS_AUTHENTICATED, status ? 'true' : 'false');
+      if (status) {
+        sessionStorage.setItem(STORAGE_KEYS.IS_AUTHENTICATED, 'true');
+      } else {
+        sessionStorage.removeItem(STORAGE_KEYS.IS_AUTHENTICATED);
+      }
+    } catch {}
+    // Pastikan tidak pernah tersimpan di localStorage
+    try {
+      localStorage.removeItem(STORAGE_KEYS.IS_AUTHENTICATED);
     } catch {}
   }
-  try {
-    localStorage.setItem(STORAGE_KEYS.IS_AUTHENTICATED, status ? 'true' : 'false');
-  } catch {}
 }
 
 export function logoutUser(): void {
@@ -975,11 +980,13 @@ export function logoutUser(): void {
     try {
       sessionStorage.removeItem(STORAGE_KEYS.IS_AUTHENTICATED);
       sessionStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+      sessionStorage.removeItem('arsip_last_active_time');
     } catch {}
   }
   try {
     localStorage.removeItem(STORAGE_KEYS.IS_AUTHENTICATED);
     localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+    localStorage.removeItem('arsip_last_active_time');
   } catch {}
 }
 

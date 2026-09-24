@@ -27,7 +27,6 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, noticeMess
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [rememberMe, setRememberMe] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -332,18 +331,15 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, noticeMess
                   </div>
                 </div>
 
-                {/* Remember Me */}
-                <div className="flex items-center justify-between text-xs pt-1">
-                  <label className="flex items-center space-x-2 text-slate-600 cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      checked={rememberMe}
-                      onChange={(e) => setRememberMe(e.target.checked)}
-                      className="rounded text-blue-600 focus:ring-blue-500"
-                    />
-                    <span>Ingat sesi masuk saya</span>
-                  </label>
-                  <span className="text-slate-400 text-[11px]">Sesi Tersimpan di Peramban</span>
+                {/* Session Security Indicator */}
+                <div className="flex items-center justify-between text-xs pt-1 px-3 py-2 rounded-xl bg-slate-50 border border-slate-200/80 text-slate-600 select-none">
+                  <div className="flex items-center gap-1.5 font-semibold text-[11px] text-slate-700">
+                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                    <span>Perlindungan Sesi Aktif</span>
+                  </div>
+                  <span className="text-slate-400 text-[10.5px]">
+                    Sesi otomatis berakhir saat browser ditutup
+                  </span>
                 </div>
 
                 {/* Submit button */}

@@ -16,6 +16,7 @@ import {
   getCurrentUser,
   setCurrentUser,
   checkIsAuthenticated,
+  setAuthenticated,
   logoutUser,
   loginAsRole,
   getAcademicYears,
@@ -124,7 +125,8 @@ export default function App() {
     const initialTime = Date.now();
     lastActivityRef.current = initialTime;
     try {
-      localStorage.setItem('arsip_last_active_time', String(initialTime));
+      sessionStorage.setItem('arsip_last_active_time', String(initialTime));
+      localStorage.removeItem('arsip_last_active_time');
     } catch {}
 
     const handleUserActivity = () => {
@@ -134,7 +136,7 @@ export default function App() {
         activityThrottleRef.current = now;
         lastActivityRef.current = now;
         try {
-          localStorage.setItem('arsip_last_active_time', String(now));
+          sessionStorage.setItem('arsip_last_active_time', String(now));
         } catch {}
       }
     };
@@ -158,7 +160,7 @@ export default function App() {
       const now = Date.now();
       let lastTime = lastActivityRef.current;
       try {
-        const stored = localStorage.getItem('arsip_last_active_time');
+        const stored = sessionStorage.getItem('arsip_last_active_time');
         if (stored) {
           const parsed = Number(stored);
           if (!isNaN(parsed) && parsed > lastTime) {
@@ -179,7 +181,7 @@ export default function App() {
         const now = Date.now();
         let lastTime = lastActivityRef.current;
         try {
-          const stored = localStorage.getItem('arsip_last_active_time');
+          const stored = sessionStorage.getItem('arsip_last_active_time');
           if (stored) {
             const parsed = Number(stored);
             if (!isNaN(parsed) && parsed > lastTime) {
@@ -456,9 +458,12 @@ export default function App() {
   // Authentication Handlers
   const handleLoginSuccess = (user: User) => {
     setAutoLogoutNotice(null);
+    setCurrentUser(user);
+    setAuthenticated(true);
     lastActivityRef.current = Date.now();
     try {
-      localStorage.setItem('arsip_last_active_time', String(Date.now()));
+      sessionStorage.setItem('arsip_last_active_time', String(Date.now()));
+      localStorage.removeItem('arsip_last_active_time');
     } catch {}
     setCurrentUserState(user);
     setIsAuthenticated(true);
