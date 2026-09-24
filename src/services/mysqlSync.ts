@@ -7,6 +7,7 @@ import {
   getUsers,
   getDeletedStudentIds,
   getDeletedDocIds,
+  getDeletedUserIds,
   markStudentsAsSynced,
   markDocumentsAsSynced,
 } from './storage';
@@ -733,7 +734,7 @@ export async function saveUserToHosting(user: User): Promise<{ success: boolean;
   }
 }
 
-export async function deleteUserFromHosting(userId: string): Promise<{ success: boolean; message: string }> {
+export async function deleteUserFromHosting(userId: string, username?: string): Promise<{ success: boolean; message: string }> {
   const config = getSyncConfig();
   if (!config.apiUrl) {
     return { success: false, message: 'URL API Rumahweb belum dikonfigurasi.' };
@@ -751,6 +752,7 @@ export async function deleteUserFromHosting(userId: string): Promise<{ success: 
       body: JSON.stringify({
         key: config.syncKey.trim(),
         userId,
+        username: username ? username.replace(/^@/, '') : '',
       }),
     });
 
@@ -833,7 +835,13 @@ export async function pullUsersFromHosting(): Promise<User[]> {
     if (!response.ok) return [];
     const data = await response.json();
     if (data.success && Array.isArray(data.users)) {
-      return data.users;
+      const deletedList = getDeletedUserIds();
+      return data.users.filter(
+        (u: any) =>
+          u &&
+          !deletedList.includes((u.id || '').toLowerCase()) &&
+          !deletedList.includes((u.username || '').toLowerCase().replace(/^@/, ''))
+      );
     }
     return [];
   } catch {
@@ -2154,20 +2162,27 @@ function handleSaveUser($pdo, $body) {
 
 function handleDeleteUser($pdo, $body) {
     $userId = $body['userId'] ?? '';
-    if (empty($userId)) {
+    $username = trim($body['username'] ?? '');
+    if (empty($userId) && empty($username)) {
         http_response_code(400);
         echo json_encode(['success' => false, 'error' => 'ID user tidak boleh kosong']);
         return;
     }
-    if ($userId === 'usr-admin-01') {
+    if ($userId === 'usr-admin-01' || strtolower($username) === 'admin') {
         http_response_code(403);
         echo json_encode(['success' => false, 'error' => 'Akun admin utama tidak boleh dihapus']);
         return;
     }
 
     try {
-        $stmt = $pdo->prepare("DELETE FROM \`arsip_users\` WHERE \`id\` = :id");
-        $stmt->execute([':id' => $userId]);
+        if (!empty($userId)) {
+            $stmt = $pdo->prepare("DELETE FROM \`arsip_users\` WHERE \`id\` = :id");
+            $stmt->execute([':id' => $userId]);
+        }
+        if (!empty($username)) {
+            $stmt = $pdo->prepare("DELETE FROM \`arsip_users\` WHERE LOWER(\`username\`) = :u OR LOWER(\`username\`) = :u2");
+            $stmt->execute([':u' => strtolower($username), ':u2' => '@' . strtolower($username)]);
+        }
         echo json_encode(['success' => true, 'message' => 'Akun petugas berhasil dihapus dari cloud']);
     } catch (Exception $e) {
         http_response_code(500);

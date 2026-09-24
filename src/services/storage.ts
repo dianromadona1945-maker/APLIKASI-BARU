@@ -14,6 +14,7 @@ const STORAGE_KEYS = {
   DELETED_STUDENT_IDS: 'arsip_deleted_student_ids_v1',
   DELETED_DOC_IDS: 'arsip_deleted_doc_ids_v1',
   DELETED_DOC_KEYS: 'arsip_deleted_doc_keys_v1',
+  DELETED_USER_IDS: 'arsip_deleted_user_ids_v1',
 };
 
 // Tombstone tracking for deleted students across devices
@@ -43,6 +44,44 @@ export function removeDeletedStudentId(studentId: string): void {
   try {
     const list = getDeletedStudentIds().filter((id) => id !== studentId);
     localStorage.setItem(STORAGE_KEYS.DELETED_STUDENT_IDS, JSON.stringify(list));
+  } catch {}
+}
+
+// Tombstone tracking for deleted users across devices and re-renders
+export function getDeletedUserIds(): string[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.DELETED_USER_IDS);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function recordDeletedUserId(userId: string, username?: string): void {
+  try {
+    const list = getDeletedUserIds();
+    const cleanId = (userId || '').trim().toLowerCase();
+    if (cleanId && !list.includes(cleanId)) {
+      list.push(cleanId);
+    }
+    if (username) {
+      const cleanU = username.trim().toLowerCase().replace(/^@/, '');
+      if (cleanU && !list.includes(cleanU)) {
+        list.push(cleanU);
+      }
+    }
+    localStorage.setItem(STORAGE_KEYS.DELETED_USER_IDS, JSON.stringify(list.slice(-500)));
+  } catch {}
+}
+
+export function removeDeletedUserId(userId: string, username?: string): void {
+  try {
+    const cleanId = (userId || '').trim().toLowerCase();
+    const cleanU = username ? username.trim().toLowerCase().replace(/^@/, '') : '';
+    const list = getDeletedUserIds().filter((x) => x !== cleanId && x !== cleanU);
+    localStorage.setItem(STORAGE_KEYS.DELETED_USER_IDS, JSON.stringify(list));
   } catch {}
 }
 
@@ -742,23 +781,38 @@ export function getUsers(): User[] {
   initializeStorage();
   const raw = localStorage.getItem(STORAGE_KEYS.USERS);
   const rawUsers: User[] = raw ? JSON.parse(raw) : INITIAL_USERS;
+  const deletedList = getDeletedUserIds();
 
-  // Only retain admin and petugas_tu
-  const validUsers = rawUsers.filter((u) => u && (u.role === 'admin' || u.role === 'petugas_tu'));
+  // Filter out any user that has been deleted by an administrator
+  const validUsers = rawUsers.filter(
+    (u) =>
+      u &&
+      (u.role === 'admin' || u.role === 'petugas_tu') &&
+      !deletedList.includes((u.id || '').toLowerCase()) &&
+      !deletedList.includes((u.username || '').toLowerCase().replace(/^@/, ''))
+  );
+
   let modified = validUsers.length !== rawUsers.length;
 
-  // Merge any missing initial default users (e.g. tu123, mila, tika1) into validUsers
-  INITIAL_USERS.forEach((initU) => {
-    const exists = validUsers.some(
-      (u) =>
-        u.id === initU.id ||
-        u.username.toLowerCase().replace(/^@/, '') === initU.username.toLowerCase().replace(/^@/, '')
-    );
-    if (!exists) {
-      validUsers.push({ ...initU });
-      modified = true;
-    }
-  });
+  // Only seed default accounts if storage was totally uninitialized
+  if (!raw) {
+    INITIAL_USERS.forEach((initU) => {
+      const isDeleted =
+        deletedList.includes(initU.id.toLowerCase()) ||
+        deletedList.includes(initU.username.toLowerCase().replace(/^@/, ''));
+      if (!isDeleted) {
+        const exists = validUsers.some(
+          (u) =>
+            u.id === initU.id ||
+            u.username.toLowerCase().replace(/^@/, '') === initU.username.toLowerCase().replace(/^@/, '')
+        );
+        if (!exists) {
+          validUsers.push({ ...initU });
+          modified = true;
+        }
+      }
+    });
+  }
 
   const updatedUsers = validUsers.map((u) => {
     const item = { ...u };
@@ -799,6 +853,9 @@ export function getUsers(): User[] {
 }
 
 export function saveUser(user: User): void {
+  // If re-creating or updating an account, unblock from deleted tombstone
+  removeDeletedUserId(user.id, user.username);
+
   const users = getUsers();
   const idx = users.findIndex((u) => u.id === user.id);
   if (idx !== -1) {
@@ -828,6 +885,9 @@ export function deleteUser(userId: string): { success: boolean; message: string 
   if (current.id === userId) {
     return { success: false, message: 'Anda tidak dapat menghapus akun yang sedang Anda gunakan saat ini.' };
   }
+
+  // Record into tombstone so it NEVER resurrects
+  recordDeletedUserId(target.id, target.username);
 
   const updated = users.filter((u) => u.id !== userId);
   localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updated));

@@ -688,9 +688,10 @@ export default function App() {
     if (!target) return;
     deleteUser(userId);
     addAuditLog('DELETE_USER', `Menghapus akun petugas: ${target.name} (@${target.username})`);
-    deleteUserFromHosting(userId).catch(() => {});
+    deleteUserFromHosting(userId, target.username).catch(() => {});
     refreshAllData();
-    showToast(`Akun petugas ${target.name} berhasil dihapus.`, 'success');
+    broadcastLocalChange();
+    showToast(`Akun petugas ${target.name} (@${target.username}) berhasil dihapus.`, 'success');
   };
 
   // Document Preview Open
