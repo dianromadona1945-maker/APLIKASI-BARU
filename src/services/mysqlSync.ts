@@ -446,25 +446,91 @@ export async function deleteDocumentFromHosting(
   }
 }
 
-export async function saveDocumentToHosting(doc: StudentDocument): Promise<{ success: boolean; message: string }> {
+export async function saveDocumentToHosting(
+  doc: StudentDocument,
+  currentUser?: User
+): Promise<{ success: boolean; message: string; fileUrl?: string; docId?: string }> {
   const config = getSyncConfig();
   if (!config.apiUrl) {
     return { success: false, message: 'URL API belum dikonfigurasi' };
   }
+
+  const user = currentUser || getCurrentUser();
+
   try {
-    const url = new URL(config.apiUrl);
+    const cleanUrl = config.apiUrl.trim();
+    const url = new URL(cleanUrl);
     url.searchParams.set('action', 'save_document');
-    const response = await fetch(url.toString(), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Sync-Key': config.syncKey.trim(),
-      },
-      body: JSON.stringify({
-        key: config.syncKey.trim(),
-        document: doc,
-      }),
-    });
+    url.searchParams.set('_t', Date.now().toString());
+
+    let response: Response;
+
+    // Convert base64 data URL to Blob for binary multipart transfer
+    let blob: Blob | null = null;
+    if (doc.fileDataUrl && doc.fileDataUrl.startsWith('data:')) {
+      try {
+        const parts = doc.fileDataUrl.split(',');
+        const mimeMatch = parts[0].match(/:(.*?);/);
+        const mime = mimeMatch ? mimeMatch[1] : (doc.fileType || 'application/octet-stream');
+        const bstr = atob(parts[1]);
+        let n = bstr.length;
+        const u8arr = new Uint8Array(n);
+        while (n--) {
+          u8arr[n] = bstr.charCodeAt(n);
+        }
+        blob = new Blob([u8arr], { type: mime });
+      } catch (blobErr) {
+        console.warn('[UPLOAD] Blob conversion failed, falling back to JSON:', blobErr);
+      }
+    }
+
+    if (blob) {
+      const formData = new FormData();
+      formData.append('key', config.syncKey.trim());
+      formData.append('action', 'save_document');
+      formData.append('id', doc.id);
+      formData.append('studentId', doc.studentId);
+      formData.append('docType', doc.docType);
+      formData.append('title', doc.title);
+      formData.append('fileName', doc.fileName);
+      formData.append('fileSize', String(doc.fileSize));
+      formData.append('fileType', doc.fileType);
+      formData.append('uploadedBy', doc.uploadedBy || `${user.name} (${user.role})`);
+      formData.append('verificationStatus', doc.verificationStatus || 'verified');
+      formData.append('notes', doc.notes || '');
+      formData.append('userId', user.id);
+      formData.append('userRole', user.role);
+      formData.append('userName', user.name);
+      formData.append('file', blob, doc.fileName);
+
+      response = await fetch(url.toString(), {
+        method: 'POST',
+        headers: {
+          'X-Sync-Key': config.syncKey.trim(),
+        },
+        body: formData,
+      });
+    } else {
+      // JSON payload
+      response = await fetch(url.toString(), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Sync-Key': config.syncKey.trim(),
+        },
+        body: JSON.stringify({
+          key: config.syncKey.trim(),
+          action: 'save_document',
+          document: {
+            ...doc,
+            uploadedBy: doc.uploadedBy || `${user.name} (${user.role})`,
+          },
+          userId: user.id,
+          userRole: user.role,
+          userName: user.name,
+        }),
+      });
+    }
 
     let data: any = null;
     if (response.ok) {
@@ -474,14 +540,30 @@ export async function saveDocumentToHosting(doc: StudentDocument): Promise<{ suc
     }
 
     if (!response.ok || !data || !data.success) {
-      return await pushDocumentsToHosting([doc]);
+      // Fallback via batch push
+      const pushRes = await pushDocumentsToHosting([doc]);
+      if (pushRes.success) {
+        markDocumentsAsSynced([doc.id]);
+        return pushRes;
+      }
+      return { success: false, message: data?.error || data?.message || `Server error (HTTP ${response.status})` };
     }
 
     markDocumentsAsSynced([doc.id]);
-    return { success: true, message: data.message || `Dokumen ${doc.title} tersimpan di cloud` };
-  } catch {
+    return {
+      success: true,
+      message: data.message || `Dokumen ${doc.title} berhasil tersimpan di server cloud.`,
+      fileUrl: data.fileUrl,
+      docId: data.docId || doc.id,
+    };
+  } catch (err: any) {
     try {
-      return await pushDocumentsToHosting([doc]);
+      const fallbackRes = await pushDocumentsToHosting([doc]);
+      if (fallbackRes.success) {
+        markDocumentsAsSynced([doc.id]);
+        return fallbackRes;
+      }
+      return { success: false, message: fallbackRes.message || String(err) };
     } catch (fallbackErr: any) {
       return { success: false, message: fallbackErr.message || String(fallbackErr) };
     }
@@ -1383,6 +1465,12 @@ define('DB_USER', '${user}');
 define('DB_PASS', '${pass}');
 define('SYNC_KEY', '${key}');
 
+// Pengaturan batas runtime PHP untuk unggah dokumen (PDF/Gambar hingga 64MB)
+@ini_set('upload_max_filesize', '64M');
+@ini_set('post_max_size', '64M');
+@ini_set('memory_limit', '256M');
+@ini_set('max_execution_time', '300');
+
 // Header CORS agar dapat diakses dari browser aplikasi
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
@@ -1396,6 +1484,26 @@ header('Pragma: no-cache');
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
     exit;
+}
+
+// Inisialisasi folder fisik penyimpanan berkas dokumen (uploads/documents)
+$uploadBaseDir = __DIR__ . '/uploads';
+$uploadDocDir = $uploadBaseDir . '/documents';
+if (!file_exists($uploadBaseDir)) {
+    @mkdir($uploadBaseDir, 0755, true);
+}
+if (!file_exists($uploadDocDir)) {
+    @mkdir($uploadDocDir, 0755, true);
+}
+if (is_dir($uploadDocDir) && !is_writable($uploadDocDir)) {
+    @chmod($uploadDocDir, 0755);
+    if (!is_writable($uploadDocDir)) {
+        @chmod($uploadDocDir, 0777);
+    }
+}
+$htaccessFile = $uploadBaseDir . '/.htaccess';
+if (!file_exists($htaccessFile)) {
+    @file_put_contents($htaccessFile, "Options -Indexes\n<FilesMatch \"\\.(php|phtml|php3|php4|php5|php7|phps|cgi|pl|py|sh)$\">\nOrder Deny,Allow\nDeny from all\n</FilesMatch>\n");
 }
 
 // Koneksi ke Database MySQL dengan PDO
@@ -1430,6 +1538,8 @@ $body = json_decode($inputJson, true) ?: [];
 $clientKey = '';
 if (!empty($_SERVER['HTTP_X_SYNC_KEY'])) {
     $clientKey = $_SERVER['HTTP_X_SYNC_KEY'];
+} elseif (!empty($_POST['key'])) {
+    $clientKey = $_POST['key'];
 } elseif (!empty($body['key'])) {
     $clientKey = $body['key'];
 } elseif (!empty($_GET['key'])) {
@@ -1437,10 +1547,10 @@ if (!empty($_SERVER['HTTP_X_SYNC_KEY'])) {
 }
 
 // Tangani Aksi (Action)
-$action = isset($_GET['action']) ? $_GET['action'] : (isset($body['action']) ? $body['action'] : 'test');
+$action = isset($_GET['action']) ? $_GET['action'] : (isset($_POST['action']) ? $_POST['action'] : (isset($body['action']) ? $body['action'] : 'test'));
 
-// Login publik tidak memblokir pengguna valid jika sync key kosong di browser baru
-if ($action !== 'login' && $clientKey !== SYNC_KEY) {
+// Login publik & streaming berkas tidak memblokir pengguna valid jika sync key kosong di browser baru
+if ($action !== 'login' && $action !== 'serve_file' && $action !== 'get_file' && $clientKey !== SYNC_KEY) {
     http_response_code(401);
     echo json_encode([
         'success' => false,
@@ -1477,8 +1587,14 @@ switch ($action) {
         handlePushStudents($pdo, $body);
         break;
 
+    case 'upload_document':
     case 'save_document':
         handleSaveDocument($pdo, $body);
+        break;
+
+    case 'serve_file':
+    case 'get_file':
+        handleServeFile($pdo);
         break;
 
     case 'push_documents':
@@ -1566,20 +1682,25 @@ function initDatabaseTables($pdo) {
         \`type\` VARCHAR(50) NOT NULL,
         \`file_name\` VARCHAR(255) DEFAULT NULL,
         \`file_size\` VARCHAR(50) DEFAULT NULL,
+        \`file_type\` VARCHAR(100) DEFAULT NULL,
+        \`file_path\` TEXT DEFAULT NULL,
+        \`file_url\` TEXT DEFAULT NULL,
         \`upload_date\` VARCHAR(50) DEFAULT NULL,
-        \`status\` VARCHAR(50) DEFAULT 'unverified',
+        \`status\` VARCHAR(50) DEFAULT 'verified',
         \`verified_by\` VARCHAR(100) DEFAULT NULL,
         \`verified_at\` VARCHAR(50) DEFAULT NULL,
         \`notes\` TEXT DEFAULT NULL,
         \`file_data\` LONGTEXT DEFAULT NULL,
         \`raw_json\` LONGTEXT DEFAULT NULL,
-        INDEX idx_student (\`student_id\`)
+        INDEX idx_student (\`student_id\`),
+        INDEX idx_type (\`type\`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;");
 
-    // Pastikan kolom raw_json tersedia di tabel dokumen
-    try {
-        $pdo->exec("ALTER TABLE \`arsip_documents\` ADD COLUMN \`raw_json\` LONGTEXT DEFAULT NULL");
-    } catch (Exception $e) {}
+    // Pastikan kolom baru tersedia di tabel dokumen yang sudah ada
+    try { $pdo->exec("ALTER TABLE \`arsip_documents\` ADD COLUMN \`file_path\` TEXT DEFAULT NULL"); } catch (Exception $e) {}
+    try { $pdo->exec("ALTER TABLE \`arsip_documents\` ADD COLUMN \`file_url\` TEXT DEFAULT NULL"); } catch (Exception $e) {}
+    try { $pdo->exec("ALTER TABLE \`arsip_documents\` ADD COLUMN \`file_type\` VARCHAR(100) DEFAULT NULL"); } catch (Exception $e) {}
+    try { $pdo->exec("ALTER TABLE \`arsip_documents\` ADD COLUMN \`raw_json\` LONGTEXT DEFAULT NULL"); } catch (Exception $e) {}
 
     // Tabel Pengaturan Tahun Pelajaran
     $pdo->exec("CREATE TABLE IF NOT EXISTS \`arsip_academic_years\` (
@@ -1718,24 +1839,167 @@ function handleClearAll($pdo) {
 }
 
 function handleSaveDocument($pdo, $body) {
-    $doc = isset($body['document']) && is_array($body['document']) ? $body['document'] : null;
-    if (!$doc || empty($doc['id']) || empty($doc['studentId'])) {
+    $uploadBaseDir = __DIR__ . '/uploads';
+    $uploadDocDir = $uploadBaseDir . '/documents';
+
+    // Pastikan folder fisik penyimpanan dokumen ada dan dapat ditulis
+    if (!file_exists($uploadDocDir)) {
+        @mkdir($uploadDocDir, 0755, true);
+    }
+    if (is_dir($uploadDocDir) && !is_writable($uploadDocDir)) {
+        @chmod($uploadDocDir, 0755);
+        if (!is_writable($uploadDocDir)) {
+            @chmod($uploadDocDir, 0777);
+        }
+    }
+
+    // Tentukan Base URL publik untuk tautan berkas
+    $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || (isset($_SERVER['SERVER_PORT']) && $_SERVER['SERVER_PORT'] == 443) || (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https');
+    $protocol = $isHttps ? 'https://' : 'http://';
+    $host = isset($_SERVER['HTTP_HOST']) ? $_SERVER['HTTP_HOST'] : (isset($_SERVER['SERVER_NAME']) ? $_SERVER['SERVER_NAME'] : 'localhost');
+    $scriptDir = dirname($_SERVER['SCRIPT_NAME']);
+    $scriptDir = ($scriptDir === '/' || $scriptDir === '\\') ? '' : rtrim($scriptDir, '/\\');
+    $baseUrl = $protocol . $host . $scriptDir;
+
+    // Periksa apakah berkas diunggah via multipart/form-data atau JSON payload
+    $isMultipart = !empty($_FILES['file']) && isset($_FILES['file']['tmp_name']);
+
+    $docId = '';
+    $studentId = '';
+    $docType = 'lainnya';
+    $title = 'Dokumen Siswa';
+    $fileName = '';
+    $fileSize = 0;
+    $fileType = 'application/octet-stream';
+    $uploadedBy = 'Petugas TU';
+    $verificationStatus = 'verified';
+    $notes = '';
+    $fileData = '';
+
+    if ($isMultipart) {
+        $docId = !empty($_POST['id']) ? trim($_POST['id']) : '';
+        $studentId = !empty($_POST['studentId']) ? trim($_POST['studentId']) : '';
+        $docType = !empty($_POST['docType']) ? strtolower(trim($_POST['docType'])) : 'lainnya';
+        $title = !empty($_POST['title']) ? trim($_POST['title']) : 'Dokumen';
+        $fileName = !empty($_POST['fileName']) ? trim($_POST['fileName']) : $_FILES['file']['name'];
+        $fileSize = (int)(!empty($_POST['fileSize']) ? $_POST['fileSize'] : $_FILES['file']['size']);
+        $fileType = !empty($_POST['fileType']) ? trim($_POST['fileType']) : $_FILES['file']['type'];
+        $uploadedBy = !empty($_POST['uploadedBy']) ? trim($_POST['uploadedBy']) : 'Petugas TU';
+        $verificationStatus = !empty($_POST['verificationStatus']) ? trim($_POST['verificationStatus']) : 'verified';
+        $notes = !empty($_POST['notes']) ? trim($_POST['notes']) : '';
+    } else {
+        $doc = isset($body['document']) && is_array($body['document']) ? $body['document'] : $body;
+        $docId = $doc['id'] ?? '';
+        $studentId = $doc['studentId'] ?? '';
+        $docType = strtolower($doc['docType'] ?? ($doc['type'] ?? 'lainnya'));
+        $title = $doc['title'] ?? 'Dokumen';
+        $fileName = $doc['fileName'] ?? ($doc['title'] ?? 'dokumen.pdf');
+        $fileSize = (int)($doc['fileSize'] ?? 0);
+        $fileType = $doc['fileType'] ?? 'application/octet-stream';
+        $uploadedBy = $doc['uploadedBy'] ?? ($doc['verifiedBy'] ?? 'Petugas TU');
+        $verificationStatus = $doc['verificationStatus'] ?? ($doc['status'] ?? 'verified');
+        $notes = $doc['notes'] ?? '';
+        $fileData = $doc['fileDataUrl'] ?? ($doc['fileData'] ?? '');
+    }
+
+    if (empty($studentId)) {
         http_response_code(400);
-        echo json_encode(['success' => false, 'error' => 'Data dokumen tidak valid atau ID / Student ID kosong']);
+        echo json_encode(['success' => false, 'error' => 'Student ID wajib diisi untuk mengaitkan dokumen dengan siswa.']);
         return;
+    }
+    if (empty($docId)) {
+        $docId = 'doc-' . $studentId . '-' . $docType;
+    }
+
+    // Sanitasi nama berkas dan ekstensi
+    $cleanStudentId = preg_replace('/[^a-zA-Z0-9_-]/', '', $studentId);
+    $cleanDocType = preg_replace('/[^a-zA-Z0-9_-]/', '', $docType);
+
+    $ext = pathinfo($fileName, PATHINFO_EXTENSION);
+    if (empty($ext)) {
+        if (strpos($fileType, 'jpeg') !== false || strpos($fileType, 'jpg') !== false) $ext = 'jpg';
+        elseif (strpos($fileType, 'png') !== false) $ext = 'png';
+        elseif (strpos($fileType, 'webp') !== false) $ext = 'webp';
+        elseif (strpos($fileType, 'svg') !== false) $ext = 'svg';
+        elseif (strpos($fileType, 'pdf') !== false) $ext = 'pdf';
+        else $ext = 'jpg';
+    }
+    $ext = strtolower(preg_replace('/[^a-zA-Z0-9]/', '', $ext));
+    if ($ext === 'jpeg') $ext = 'jpg';
+
+    // Format yang diizinkan
+    $allowedExts = ['pdf', 'jpg', 'jpeg', 'png', 'webp', 'svg', 'heic'];
+    if (!in_array($ext, $allowedExts)) {
+        $ext = 'jpg';
+    }
+
+    $safeFilename = 'DOC_' . $cleanStudentId . '_' . strtoupper($cleanDocType) . '_' . date('Ymd_His') . '_' . substr(md5(uniqid(mt_rand(), true)), 0, 6) . '.' . $ext;
+    $targetFilePath = $uploadDocDir . '/' . $safeFilename;
+
+    $fileSavedOnDisk = false;
+
+    // Simpan berkas fisik ke disk server hosting
+    if ($isMultipart && is_uploaded_file($_FILES['file']['tmp_name'])) {
+        if (@move_uploaded_file($_FILES['file']['tmp_name'], $targetFilePath)) {
+            $fileSavedOnDisk = true;
+            $fileSize = filesize($targetFilePath);
+            @chmod($targetFilePath, 0644);
+        } elseif (@copy($_FILES['file']['tmp_name'], $targetFilePath)) {
+            $fileSavedOnDisk = true;
+            $fileSize = filesize($targetFilePath);
+            @chmod($targetFilePath, 0644);
+        }
+    } elseif (!empty($fileData) && strpos($fileData, 'data:') === 0) {
+        $parts = explode(',', $fileData, 2);
+        if (count($parts) === 2) {
+            $binary = base64_decode($parts[1]);
+            if ($binary !== false && @file_put_contents($targetFilePath, $binary) !== false) {
+                $fileSavedOnDisk = true;
+                $fileSize = filesize($targetFilePath);
+                @chmod($targetFilePath, 0644);
+            }
+        }
+    }
+
+    $fileRelativePath = '';
+    $filePublicUrl = '';
+    if ($fileSavedOnDisk) {
+        $fileRelativePath = 'uploads/documents/' . $safeFilename;
+        $filePublicUrl = $baseUrl . '/' . $fileRelativePath;
     }
 
     try {
+        $now = date('c');
+        $cleanDoc = [
+            'id' => $docId,
+            'studentId' => $studentId,
+            'docType' => $docType,
+            'title' => $title,
+            'fileName' => $fileName,
+            'fileSize' => $fileSize,
+            'fileType' => $fileType,
+            'fileUrl' => $filePublicUrl ?: $fileRelativePath,
+            'uploadedAt' => $now,
+            'uploadedBy' => $uploadedBy,
+            'verificationStatus' => $verificationStatus,
+            'notes' => $notes,
+            'syncedWithCloud' => true,
+        ];
+
+        // Query UPSERT ke tabel arsip_documents
         $stmt = $pdo->prepare("INSERT INTO \`arsip_documents\` (
-            \`id\`, \`student_id\`, \`type\`, \`file_name\`, \`file_size\`, \`upload_date\`,
-            \`status\`, \`verified_by\`, \`verified_at\`, \`notes\`, \`file_data\`, \`raw_json\`
+            \`id\`, \`student_id\`, \`type\`, \`file_name\`, \`file_size\`, \`file_type\`,
+            \`file_path\`, \`file_url\`, \`upload_date\`, \`status\`, \`verified_by\`, \`verified_at\`, \`notes\`, \`file_data\`, \`raw_json\`
         ) VALUES (
-            :id, :student_id, :type, :file_name, :file_size, :upload_date,
-            :status, :verified_by, :verified_at, :notes, :file_data, :raw_json
+            :id, :student_id, :type, :file_name, :file_size, :file_type,
+            :file_path, :file_url, :upload_date, :status, :verified_by, :verified_at, :notes, :file_data, :raw_json
         ) ON DUPLICATE KEY UPDATE
             \`type\` = VALUES(\`type\`),
             \`file_name\` = VALUES(\`file_name\`),
             \`file_size\` = VALUES(\`file_size\`),
+            \`file_type\` = VALUES(\`file_type\`),
+            \`file_path\` = VALUES(\`file_path\`),
+            \`file_url\` = VALUES(\`file_url\`),
             \`upload_date\` = VALUES(\`upload_date\`),
             \`status\` = VALUES(\`status\`),
             \`verified_by\` = VALUES(\`verified_by\`),
@@ -1744,30 +2008,101 @@ function handleSaveDocument($pdo, $body) {
             \`file_data\` = VALUES(\`file_data\`),
             \`raw_json\` = VALUES(\`raw_json\`)");
 
+        // Simpan path relatif di file_data jika berhasil disimpan di disk
+        $dbFileData = !empty($fileRelativePath) ? $fileRelativePath : (!empty($fileData) && strlen($fileData) < 2000000 ? $fileData : '');
+
         $stmt->execute([
-            ':id' => $doc['id'],
-            ':student_id' => $doc['studentId'],
-            ':type' => $doc['docType'] ?? ($doc['type'] ?? 'lainnya'),
-            ':file_name' => $doc['fileName'] ?? ($doc['title'] ?? 'Dokumen'),
-            ':file_size' => (string)($doc['fileSize'] ?? '0'),
-            ':upload_date' => $doc['uploadedAt'] ?? ($doc['uploadDate'] ?? date('c')),
-            ':status' => $doc['verificationStatus'] ?? ($doc['status'] ?? 'unverified'),
-            ':verified_by' => $doc['uploadedBy'] ?? ($doc['verifiedBy'] ?? null),
-            ':verified_at' => $doc['verifiedAt'] ?? null,
-            ':notes' => $doc['notes'] ?? '',
-            ':file_data' => $doc['fileDataUrl'] ?? ($doc['fileData'] ?? null),
-            ':raw_json' => json_encode($doc),
+            ':id' => $docId,
+            ':student_id' => $studentId,
+            ':type' => $docType,
+            ':file_name' => $fileName,
+            ':file_size' => (string)$fileSize,
+            ':file_type' => $fileType,
+            ':file_path' => $fileRelativePath,
+            ':file_url' => $filePublicUrl,
+            ':upload_date' => $now,
+            ':status' => $verificationStatus,
+            ':verified_by' => $uploadedBy,
+            ':verified_at' => $now,
+            ':notes' => $notes,
+            ':file_data' => $dbFileData,
+            ':raw_json' => json_encode($cleanDoc),
         ]);
+
+        // Catat Audit Log di MySQL
+        try {
+            $stmtLog = $pdo->prepare("INSERT INTO \`arsip_audit_logs\` (\`id\`, \`timestamp\`, \`user_name\`, \`user_role\`, \`action\`, \`details\`)
+                VALUES (:id, :timestamp, :user_name, :user_role, :action, :details)");
+            $stmtLog->execute([
+                ':id' => 'log-' . time() . '-' . substr(md5(uniqid()), 0, 6),
+                ':timestamp' => $now,
+                ':user_name' => $uploadedBy,
+                ':user_role' => !empty($_POST['userRole']) ? $_POST['userRole'] : (!empty($body['userRole']) ? $body['userRole'] : 'petugas_tu'),
+                ':action' => 'UPLOAD_DOC',
+                ':details' => 'Mengunggah dokumen ' . $title . ' (' . $fileName . ') untuk siswa NISN/ID: ' . $studentId,
+            ]);
+        } catch (Exception $logErr) {}
 
         echo json_encode([
             'success' => true,
-            'message' => 'Dokumen ' . ($doc['title'] ?? '') . ' berhasil disimpan di MySQL cloud.',
-            'docId' => $doc['id']
+            'message' => 'Dokumen ' . $fileName . ' berhasil diarsipkan ke database & penyimpanan hosting.',
+            'docId' => $docId,
+            'studentId' => $studentId,
+            'docType' => $docType,
+            'fileUrl' => $filePublicUrl ?: $fileRelativePath,
+            'filePath' => $fileRelativePath,
+            'fileName' => $fileName,
+            'fileSize' => $fileSize,
+            'uploadedBy' => $uploadedBy,
+            'storage' => $fileSavedOnDisk ? 'disk_and_database' : 'database_only',
         ]);
     } catch (Exception $e) {
         http_response_code(500);
         echo json_encode(['success' => false, 'error' => 'Gagal menyimpan dokumen: ' . $e->getMessage()]);
     }
+}
+
+function handleServeFile($pdo) {
+    $fileParam = isset($_GET['file']) ? trim($_GET['file']) : '';
+    $idParam = isset($_GET['id']) ? trim($_GET['id']) : '';
+
+    $filePath = '';
+    if (!empty($idParam)) {
+        try {
+            $stmt = $pdo->prepare("SELECT \`file_path\`, \`file_name\`, \`file_type\` FROM \`arsip_documents\` WHERE \`id\` = :id LIMIT 1");
+            $stmt->execute([':id' => $idParam]);
+            $row = $stmt->fetch();
+            if ($row && !empty($row['file_path'])) {
+                $filePath = __DIR__ . '/' . ltrim($row['file_path'], '/');
+            }
+        } catch (Exception $e) {}
+    }
+
+    if (empty($filePath) && !empty($fileParam)) {
+        $cleanName = basename($fileParam);
+        $filePath = __DIR__ . '/uploads/documents/' . $cleanName;
+    }
+
+    if (!empty($filePath) && file_exists($filePath) && is_readable($filePath)) {
+        $mime = 'application/octet-stream';
+        $ext = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
+        if ($ext === 'jpg' || $ext === 'jpeg') $mime = 'image/jpeg';
+        elseif ($ext === 'png') $mime = 'image/png';
+        elseif ($ext === 'webp') $mime = 'image/webp';
+        elseif ($ext === 'svg') $mime = 'image/svg+xml';
+        elseif ($ext === 'pdf') $mime = 'application/pdf';
+
+        header('Content-Type: ' . $mime);
+        header('Content-Length: ' . filesize($filePath));
+        header('Content-Disposition: inline; filename="' . basename($filePath) . '"');
+        header('Cache-Control: public, max-age=86400');
+        readfile($filePath);
+        exit;
+    }
+
+    http_response_code(404);
+    echo json_encode(['success' => false, 'error' => 'Berkas dokumen tidak ditemukan di server.']);
+    exit;
 }
 
 function handlePushDocuments($pdo, $body) {
@@ -2226,13 +2561,38 @@ function handlePullAll($pdo) {
     }
 
     // Ambil dokumen
+    $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || (isset($_SERVER['SERVER_PORT']) && $_SERVER['SERVER_PORT'] == 443) || (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https');
+    $protocol = $isHttps ? 'https://' : 'http://';
+    $host = isset($_SERVER['HTTP_HOST']) ? $_SERVER['HTTP_HOST'] : (isset($_SERVER['SERVER_NAME']) ? $_SERVER['SERVER_NAME'] : 'localhost');
+    $scriptDir = dirname($_SERVER['SCRIPT_NAME']);
+    $scriptDir = ($scriptDir === '/' || $scriptDir === '\\') ? '' : rtrim($scriptDir, '/\\');
+    $baseUrl = $protocol . $host . $scriptDir;
+
     $stmt2 = $pdo->query("SELECT * FROM \`arsip_documents\`");
     $rawDocs = $stmt2->fetchAll();
     $documents = [];
     foreach ($rawDocs as $d) {
+        $fileUrl = $d['file_url'] ?? '';
+        if (empty($fileUrl) && !empty($d['file_path'])) {
+            $fileUrl = $baseUrl . '/' . ltrim($d['file_path'], '/');
+        }
+
+        $fileData = $d['file_data'] ?? '';
+        if (empty($fileData)) {
+            $fileData = $fileUrl;
+        } elseif (!empty($fileData) && strpos($fileData, 'uploads/') === 0) {
+            $fileData = $baseUrl . '/' . ltrim($fileData, '/');
+        }
+
         if (!empty($d['raw_json'])) {
             $decoded = json_decode($d['raw_json'], true);
             if (is_array($decoded)) {
+                if (empty($decoded['fileDataUrl']) && !empty($fileData)) {
+                    $decoded['fileDataUrl'] = $fileData;
+                }
+                if (empty($decoded['fileUrl']) && !empty($fileUrl)) {
+                    $decoded['fileUrl'] = $fileUrl;
+                }
                 $documents[] = $decoded;
                 continue;
             }
@@ -2252,14 +2612,16 @@ function handlePullAll($pdo) {
             'docType' => strtolower($d['type']),
             'title' => $d['file_name'] ?? 'Dokumen Siswa',
             'fileName' => $d['file_name'] ?? 'dokumen.pdf',
-            'fileType' => 'application/pdf',
+            'fileType' => $d['file_type'] ?? 'application/pdf',
             'fileSize' => (int)($d['file_size'] ?? 0),
-            'fileDataUrl' => $d['file_data'] ?? '',
+            'fileDataUrl' => !empty($fileUrl) ? $fileUrl : $fileData,
+            'fileUrl' => $fileUrl,
             'uploadedAt' => $d['upload_date'] ?? date('c'),
             'uploadedBy' => $d['verified_by'] ?? 'Petugas TU',
             'verificationStatus' => $vStatus,
             'notes' => $d['notes'] ?? '',
             'version' => 1,
+            'syncedWithCloud' => true,
         ];
     }
 

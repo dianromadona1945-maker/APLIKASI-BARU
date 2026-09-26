@@ -14,6 +14,7 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import { StudentDocument, Student, VerificationStatus, UserRole } from '../types';
+import { getSyncConfig } from '../services/mysqlSync';
 
 interface DocumentPreviewModalProps {
   document: StudentDocument | null;
@@ -35,6 +36,33 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
   const [showInfo, setShowInfo] = useState(true);
 
   if (!document) return null;
+
+  const resolvedFileUrl = (() => {
+    const raw = document.fileDataUrl || '';
+    if (raw.startsWith('http://') || raw.startsWith('https://') || raw.startsWith('data:') || raw.startsWith('blob:')) {
+      return raw;
+    }
+    if (raw.startsWith('uploads/') || raw.startsWith('/uploads/')) {
+      try {
+        const config = getSyncConfig();
+        if (config.apiUrl) {
+          const base = new URL(config.apiUrl);
+          const pathSegments = base.pathname.split('/');
+          pathSegments.pop(); // remove api.php
+          const basePath = pathSegments.join('/');
+          const cleanRel = raw.replace(/^\//, '');
+          return `${base.origin}${basePath}/${cleanRel}`;
+        }
+      } catch {}
+    }
+    return raw;
+  })();
+
+  const isImage =
+    document.fileType.includes('image') ||
+    resolvedFileUrl.startsWith('data:image') ||
+    Boolean(resolvedFileUrl.match(/\.(jpe?g|png|webp|svg)($|\?)/i)) ||
+    Boolean(document.fileName.match(/\.(jpe?g|png|webp|svg)$/i));
 
   const handleZoomIn = () => setZoom((prev) => Math.min(prev + 25, 250));
   const handleZoomOut = () => setZoom((prev) => Math.max(prev - 25, 50));
@@ -133,7 +161,7 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
           </button>
 
           <a
-            href={document.fileDataUrl}
+            href={resolvedFileUrl}
             download={document.fileName}
             className="p-2 text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg transition"
             title="Unduh Berkas Ini"
@@ -172,15 +200,15 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
               transformOrigin: 'center center',
             }}
           >
-            {document.fileType.includes('image') || document.fileDataUrl.startsWith('data:image') ? (
+            {isImage ? (
               <img
-                src={document.fileDataUrl}
+                src={resolvedFileUrl}
                 alt={document.title}
                 className="max-h-[82vh] w-auto object-contain block mx-auto pointer-events-none select-none"
               />
             ) : (
               <iframe
-                src={document.fileDataUrl}
+                src={resolvedFileUrl}
                 title={document.title}
                 className="w-[750px] h-[85vh] border-0"
               />

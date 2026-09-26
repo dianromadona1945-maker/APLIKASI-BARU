@@ -42,7 +42,6 @@ import {
   saveLastKnownDocSyncTimestamp,
   getLastKnownUserSyncTimestamp,
   saveLastKnownUserSyncTimestamp,
-  pullUsersFromHosting,
   saveStudentToHosting,
   pushStudentsToHosting,
   executeTwoWaySync,
@@ -631,14 +630,25 @@ export default function App() {
     broadcastLocalChange();
 
     // Simpan instan dokumen langsung ke MySQL Hosting Rumahweb
-    saveDocumentToHosting(newDoc)
+    saveDocumentToHosting(newDoc, currentUser)
       .then((res) => {
         if (res.success) {
           setSyncStatus('connected');
+          // Perbarui tautan berkas dari server hosting bila berhasil disimpan di penyimpanan fisik
+          if (res.fileUrl) {
+            const updated: StudentDocument = {
+              ...newDoc,
+              fileDataUrl: res.fileUrl,
+              syncedWithCloud: true,
+            };
+            saveDocument(updated);
+            refreshAllData();
+          }
         }
         syncToCloudIfEnabled();
       })
-      .catch(() => {
+      .catch((err) => {
+        console.warn('[UPLOAD] Gagal menyimpan langsung ke hosting:', err);
         syncToCloudIfEnabled();
       });
 

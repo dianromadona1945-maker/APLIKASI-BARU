@@ -758,15 +758,45 @@ export function saveDocument(doc: StudentDocument): StudentDocument {
   const docWithSync: StudentDocument = {
     ...doc,
     verificationStatus: 'verified', // All uploaded docs are valid/terarsip by default (no separate verification needed)
-    syncedWithCloud: false,
+    syncedWithCloud: doc.syncedWithCloud ?? false,
   };
-  const idx = docs.findIndex((d) => d.id === doc.id || (doc.studentId && doc.docType && d.studentId === doc.studentId && d.docType === doc.docType));
+  const idx = docs.findIndex(
+    (d) =>
+      d.id === doc.id ||
+      (doc.studentId &&
+        doc.docType &&
+        d.studentId === doc.studentId &&
+        d.docType?.toLowerCase() === doc.docType?.toLowerCase())
+  );
   if (idx !== -1) {
     docs[idx] = docWithSync;
   } else {
     docs.unshift(docWithSync);
   }
-  localStorage.setItem(STORAGE_KEYS.DOCUMENTS, JSON.stringify(docs));
+
+  try {
+    localStorage.setItem(STORAGE_KEYS.DOCUMENTS, JSON.stringify(docs));
+  } catch (err) {
+    console.warn('[STORAGE] localStorage quota exceeded, optimizing documents storage:', err);
+    try {
+      // In case quota is exceeded, keep full data for newest documents and truncate large base64 strings in older synced docs
+      const optimizedDocs = docs.map((d, index) => {
+        if (index < 5 || d.id === docWithSync.id) {
+          return d;
+        }
+        if (d.fileDataUrl && d.fileDataUrl.length > 50000) {
+          return {
+            ...d,
+            fileDataUrl: d.syncedWithCloud ? '' : d.fileDataUrl.slice(0, 1000),
+          };
+        }
+        return d;
+      });
+      localStorage.setItem(STORAGE_KEYS.DOCUMENTS, JSON.stringify(optimizedDocs));
+    } catch (fallbackErr) {
+      console.error('[STORAGE] Unable to write documents to localStorage even after optimization:', fallbackErr);
+    }
+  }
   return docWithSync;
 }
 
@@ -1548,7 +1578,21 @@ export function smartMergeRemoteData(data: {
   }
 
   const finalDocs = Array.from(docMap.values());
-  localStorage.setItem(STORAGE_KEYS.DOCUMENTS, JSON.stringify(finalDocs));
+  try {
+    localStorage.setItem(STORAGE_KEYS.DOCUMENTS, JSON.stringify(finalDocs));
+  } catch (err) {
+    console.warn('[STORAGE] localStorage quota reached during sync, pruning large base64 strings:', err);
+    try {
+      const pruned = finalDocs.map((d, i) => {
+        if (i < 5) return d;
+        if (d.fileDataUrl && d.fileDataUrl.length > 50000) {
+          return { ...d, fileDataUrl: d.syncedWithCloud ? '' : d.fileDataUrl.slice(0, 1000) };
+        }
+        return d;
+      });
+      localStorage.setItem(STORAGE_KEYS.DOCUMENTS, JSON.stringify(pruned));
+    } catch {}
+  }
 
   // 4. Merge Academic Years
   if (data.academicYears && Array.isArray(data.academicYears) && data.academicYears.length > 0) {

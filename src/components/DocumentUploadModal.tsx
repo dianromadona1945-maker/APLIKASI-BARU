@@ -54,6 +54,10 @@ export const DocumentUploadModal: React.FC<DocumentUploadModalProps> = ({
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [filePreviewUrl, setFilePreviewUrl] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadErrorMessage, setUploadErrorMessage] = useState<string | null>(null);
+  const [isOptimizingFile, setIsOptimizingFile] = useState(false);
+  const [optimizedFileSize, setOptimizedFileSize] = useState<number>(0);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const cameraInputFallbackRef = useRef<HTMLInputElement | null>(null);
 
@@ -357,6 +361,70 @@ export const DocumentUploadModal: React.FC<DocumentUploadModalProps> = ({
     startCamera(selectedCameraId);
   };
 
+  // Helper to optimize large images before saving/uploading
+  const optimizeImageFile = async (
+    file: File,
+    maxDimension = 1920,
+    quality = 0.85
+  ): Promise<{ dataUrl: string; size: number }> => {
+    if (!file.type.startsWith('image/') || file.type === 'image/svg+xml') {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve({ dataUrl: e.target?.result as string, size: file.size });
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+    }
+
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const rawUrl = e.target?.result as string;
+        const img = new Image();
+        img.onload = () => {
+          let width = img.naturalWidth || img.width;
+          let height = img.naturalHeight || img.height;
+
+          // If image is already modest size, keep as is
+          if (width <= maxDimension && height <= maxDimension && file.size < 600 * 1024) {
+            resolve({ dataUrl: rawUrl, size: file.size });
+            return;
+          }
+
+          // Scale down maintaining aspect ratio
+          if (width > maxDimension || height > maxDimension) {
+            if (width > height) {
+              height = Math.round((height * maxDimension) / width);
+              width = maxDimension;
+            } else {
+              width = Math.round((width * maxDimension) / height);
+              height = maxDimension;
+            }
+          }
+
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve({ dataUrl: rawUrl, size: file.size });
+            return;
+          }
+
+          ctx.drawImage(img, 0, 0, width, height);
+          const compressedUrl = canvas.toDataURL('image/jpeg', quality);
+          const approxBytes = Math.round((compressedUrl.length - 23) * 0.75);
+          resolve({ dataUrl: compressedUrl, size: approxBytes });
+        };
+        img.onerror = () => {
+          resolve({ dataUrl: rawUrl, size: file.size });
+        };
+        img.src = rawUrl;
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
   // File Manager Handlers
   const handleFileDrop = (e: React.DragEvent) => {
     e.preventDefault();
@@ -370,14 +438,42 @@ export const DocumentUploadModal: React.FC<DocumentUploadModalProps> = ({
     if (file) processSelectedFile(file);
   };
 
-  const processSelectedFile = (file: File) => {
+  const processSelectedFile = async (file: File) => {
+    setUploadErrorMessage(null);
+
+    // Validate size (max 25MB)
+    const MAX_SIZE = 25 * 1024 * 1024;
+    if (file.size > MAX_SIZE) {
+      setUploadErrorMessage(`Ukuran berkas (${formatBytes(file.size)}) melebihi batas maksimal 25MB.`);
+      return;
+    }
+
+    // Validate format
+    const validExtensions = ['.pdf', '.jpg', '.jpeg', '.png', '.webp', '.svg', '.heic'];
+    const nameLower = file.name.toLowerCase();
+    const isValidExt = validExtensions.some((ext) => nameLower.endsWith(ext));
+    if (!isValidExt && !file.type.startsWith('image/') && file.type !== 'application/pdf') {
+      setUploadErrorMessage('Format berkas tidak didukung. Mohon gunakan format PDF, JPG, JPEG, PNG, atau WEBP.');
+      return;
+    }
+
     setSelectedFile(file);
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const result = event.target?.result as string;
-      setFilePreviewUrl(result);
-    };
-    reader.readAsDataURL(file);
+    setIsOptimizingFile(true);
+    try {
+      const result = await optimizeImageFile(file);
+      setFilePreviewUrl(result.dataUrl);
+      setOptimizedFileSize(result.size);
+    } catch {
+      // Fallback direct read
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        setFilePreviewUrl(e.target?.result as string);
+        setOptimizedFileSize(file.size);
+      };
+      reader.readAsDataURL(file);
+    } finally {
+      setIsOptimizingFile(false);
+    }
   };
 
   // Transfer file image to Auto-Scanner Cleaner
@@ -398,45 +494,67 @@ export const DocumentUploadModal: React.FC<DocumentUploadModalProps> = ({
   };
 
   // Final Upload Handler
-  const handleConfirmUpload = () => {
-    if (activeTab === 'camera-scan' || capturedRawUrl) {
-      // Save Scanned Image
-      if (!enhancedResultUrl) return;
-      const cleanStudentName = student.name.replace(/[^a-zA-Z0-9]/g, '_');
-      const timestamp = new Date().toISOString().slice(0, 10);
-      const fileName = `SCAN_${docType.toUpperCase()}_${cleanStudentName}_${timestamp}.jpg`;
+  const handleConfirmUpload = async () => {
+    setUploadErrorMessage(null);
+    setIsUploading(true);
 
-      onSaveDocument({
-        studentId: student.id,
-        docType: docType,
-        title: `${docConfig.title} - ${student.name}`,
-        fileName: fileName,
-        fileType: 'image/jpeg',
-        fileSize: enhancedFileSize || 450000,
-        fileDataUrl: enhancedResultUrl,
-        uploadedBy: `${currentUser.name} (${currentUser.role})`,
-        verificationStatus: 'verified',
-        notes: `Dipindai melalui Kamera Dokumen Auto-Scan (Filter: ${filterPreset.toUpperCase()}).`,
-      });
+    try {
+      const uploaderName = currentUser?.name || 'Petugas';
+      const uploaderRole = currentUser?.role || 'petugas_tu';
+      const uploadedByStr = `${uploaderName} (${uploaderRole})`;
 
-      onClose();
-    } else {
-      // Save File Manager document
-      if (!selectedFile || !filePreviewUrl) return;
-      onSaveDocument({
-        studentId: student.id,
-        docType: docType,
-        title: `${docConfig.title} - ${student.name}`,
-        fileName: selectedFile.name,
-        fileType: selectedFile.type || 'application/octet-stream',
-        fileSize: selectedFile.size,
-        fileDataUrl: filePreviewUrl,
-        uploadedBy: `${currentUser.name} (${currentUser.role})`,
-        verificationStatus: 'verified',
-        notes: 'Dokumen diunggah melalui File Manager.',
-      });
+      if (activeTab === 'camera-scan' || capturedRawUrl) {
+        // Save Scanned Image
+        if (!enhancedResultUrl) {
+          setIsUploading(false);
+          return;
+        }
+        const cleanStudentName = student.name.replace(/[^a-zA-Z0-9]/g, '_');
+        const timestamp = new Date().toISOString().slice(0, 10);
+        const fileName = `SCAN_${docType.toUpperCase()}_${cleanStudentName}_${timestamp}.jpg`;
 
-      onClose();
+        await onSaveDocument({
+          studentId: student.id,
+          docType: docType,
+          title: `${docConfig.title} - ${student.name}`,
+          fileName: fileName,
+          fileType: 'image/jpeg',
+          fileSize: enhancedFileSize || 450000,
+          fileDataUrl: enhancedResultUrl,
+          uploadedBy: uploadedByStr,
+          verificationStatus: 'verified',
+          notes: `Dipindai melalui Kamera Dokumen Auto-Scan (Filter: ${filterPreset.toUpperCase()}).`,
+        });
+
+        setIsUploading(false);
+        onClose();
+      } else {
+        // Save File Manager document
+        if (!selectedFile || !filePreviewUrl) {
+          setIsUploading(false);
+          return;
+        }
+
+        await onSaveDocument({
+          studentId: student.id,
+          docType: docType,
+          title: `${docConfig.title} - ${student.name}`,
+          fileName: selectedFile.name,
+          fileType: selectedFile.type || 'application/octet-stream',
+          fileSize: optimizedFileSize || selectedFile.size,
+          fileDataUrl: filePreviewUrl,
+          uploadedBy: uploadedByStr,
+          verificationStatus: 'verified',
+          notes: 'Dokumen diunggah melalui File Manager.',
+        });
+
+        setIsUploading(false);
+        onClose();
+      }
+    } catch (err: any) {
+      console.error('[UPLOAD] Gagal menyimpan dokumen:', err);
+      setUploadErrorMessage(err.message || 'Terjadi kesalahan saat memproses dokumen. Silakan coba kembali.');
+      setIsUploading(false);
     }
   };
 
@@ -530,6 +648,31 @@ export const DocumentUploadModal: React.FC<DocumentUploadModalProps> = ({
 
         {/* Modal Body */}
         <div className="flex-1 overflow-y-auto p-4 sm:p-5">
+          {/* Error Banner if upload fails */}
+          {uploadErrorMessage && (
+            <div className="mb-4 p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-xs flex items-start gap-2.5 animate-fadeIn">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-600" />
+              <div className="flex-1">
+                <span className="font-bold block mb-0.5">Gagal Mengunggah Berkas</span>
+                <span>{uploadErrorMessage}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setUploadErrorMessage(null)}
+                className="text-rose-500 hover:text-rose-800 text-xs font-bold"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
+          {/* Optimizing file indicator */}
+          {isOptimizingFile && (
+            <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-xl text-blue-700 text-xs flex items-center gap-2 animate-pulse">
+              <RefreshCw className="w-4 h-4 animate-spin text-blue-600" />
+              <span>Sedang mengoptimalkan resolusi dan ukuran gambar berkas...</span>
+            </div>
+          )}
           {/* ========================================= */}
           {/* TAB 1: FILE MANAGER / PERANGKAT          */}
           {/* ========================================= */}
@@ -1093,8 +1236,9 @@ export const DocumentUploadModal: React.FC<DocumentUploadModalProps> = ({
           <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
             <button
               type="button"
+              disabled={isUploading}
               onClick={onClose}
-              className="px-4 py-2 bg-white hover:bg-slate-100 text-slate-700 rounded-xl text-xs font-bold border border-slate-300 transition cursor-pointer"
+              className="px-4 py-2 bg-white hover:bg-slate-100 disabled:opacity-50 text-slate-700 rounded-xl text-xs font-bold border border-slate-300 transition cursor-pointer"
             >
               Batal
             </button>
@@ -1103,21 +1247,41 @@ export const DocumentUploadModal: React.FC<DocumentUploadModalProps> = ({
               <button
                 type="button"
                 id="save-scanned-document-btn"
+                disabled={isUploading}
                 onClick={handleConfirmUpload}
-                className="inline-flex items-center gap-2 px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md transition cursor-pointer"
+                className="inline-flex items-center gap-2 px-5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white rounded-xl text-xs font-bold shadow-md transition cursor-pointer"
               >
-                <Check className="w-4 h-4" />
-                <span>Gunakan Dokumen Hasil Scan Ini</span>
+                {isUploading ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Sedang Menyimpan...</span>
+                  </>
+                ) : (
+                  <>
+                    <Check className="w-4 h-4" />
+                    <span>Gunakan Dokumen Hasil Scan Ini</span>
+                  </>
+                )}
               </button>
             ) : selectedFile ? (
               <button
                 type="button"
                 id="save-selected-file-btn"
+                disabled={isUploading || isOptimizingFile}
                 onClick={handleConfirmUpload}
-                className="inline-flex items-center gap-2 px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-md transition cursor-pointer"
+                className="inline-flex items-center gap-2 px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white rounded-xl text-xs font-bold shadow-md transition cursor-pointer"
               >
-                <Check className="w-4 h-4" />
-                <span>Simpan Dokumen Ini</span>
+                {isUploading ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Sedang Mengunggah & Mengarsipkan...</span>
+                  </>
+                ) : (
+                  <>
+                    <Check className="w-4 h-4" />
+                    <span>Simpan Dokumen Ini</span>
+                  </>
+                )}
               </button>
             ) : null}
           </div>
