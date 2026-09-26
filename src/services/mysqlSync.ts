@@ -1503,7 +1503,7 @@ if (is_dir($uploadDocDir) && !is_writable($uploadDocDir)) {
 }
 $htaccessFile = $uploadBaseDir . '/.htaccess';
 if (!file_exists($htaccessFile)) {
-    @file_put_contents($htaccessFile, "Options -Indexes\n<FilesMatch \"\\.(php|phtml|php3|php4|php5|php7|phps|cgi|pl|py|sh)$\">\nOrder Deny,Allow\nDeny from all\n</FilesMatch>\n");
+    @file_put_contents($htaccessFile, "Options -Indexes\n");
 }
 
 // Koneksi ke Database MySQL dengan PDO
@@ -1857,9 +1857,9 @@ function handleSaveDocument($pdo, $body) {
     $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || (isset($_SERVER['SERVER_PORT']) && $_SERVER['SERVER_PORT'] == 443) || (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https');
     $protocol = $isHttps ? 'https://' : 'http://';
     $host = isset($_SERVER['HTTP_HOST']) ? $_SERVER['HTTP_HOST'] : (isset($_SERVER['SERVER_NAME']) ? $_SERVER['SERVER_NAME'] : 'localhost');
-    $scriptDir = dirname($_SERVER['SCRIPT_NAME']);
-    $scriptDir = ($scriptDir === '/' || $scriptDir === '\\') ? '' : rtrim($scriptDir, '/\\');
-    $baseUrl = $protocol . $host . $scriptDir;
+    $rawDir = dirname($_SERVER['SCRIPT_NAME']);
+    $cleanDir = trim(str_replace(DIRECTORY_SEPARATOR, '/', $rawDir), '/');
+    $baseUrl = $protocol . $host . ($cleanDir !== '' ? '/' . $cleanDir : '');
 
     // Periksa apakah berkas diunggah via multipart/form-data atau JSON payload
     $isMultipart = !empty($_FILES['file']) && isset($_FILES['file']['tmp_name']);
@@ -2564,9 +2564,9 @@ function handlePullAll($pdo) {
     $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || (isset($_SERVER['SERVER_PORT']) && $_SERVER['SERVER_PORT'] == 443) || (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https');
     $protocol = $isHttps ? 'https://' : 'http://';
     $host = isset($_SERVER['HTTP_HOST']) ? $_SERVER['HTTP_HOST'] : (isset($_SERVER['SERVER_NAME']) ? $_SERVER['SERVER_NAME'] : 'localhost');
-    $scriptDir = dirname($_SERVER['SCRIPT_NAME']);
-    $scriptDir = ($scriptDir === '/' || $scriptDir === '\\') ? '' : rtrim($scriptDir, '/\\');
-    $baseUrl = $protocol . $host . $scriptDir;
+    $rawDir = dirname($_SERVER['SCRIPT_NAME']);
+    $cleanDir = trim(str_replace(DIRECTORY_SEPARATOR, '/', $rawDir), '/');
+    $baseUrl = $protocol . $host . ($cleanDir !== '' ? '/' . $cleanDir : '');
 
     $stmt2 = $pdo->query("SELECT * FROM \`arsip_documents\`");
     $rawDocs = $stmt2->fetchAll();
